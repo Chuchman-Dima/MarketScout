@@ -81,16 +81,18 @@ with col2:
         st.text_input("Об'єм двигуна (л)", value="0.0 (Електро)", disabled=True)
         engine_capacity = 0.0
     else:
-        # Замість жорсткого selectbox, робимо number_input з підказкою,
-        # щоб користувач міг ввести свій об'єм, якщо його немає в базі
-        suggested_capacity = 2.0
+        # Шукаємо об'єми в базі для обраної марки та моделі
         if mark != 'Інша' and model_name != 'Інша':
-            raw_capacities = engine_mapping.get(mark, {}).get(model_name, [])
-            if raw_capacities:
-                suggested_capacity = float(raw_capacities[0])  # Беремо найпопулярніший або перший
+            available_capacities = engine_mapping.get(mark, {}).get(model_name, default_capacities)
+            # Якщо раптом список порожній, підставляємо дефолтний
+            if not available_capacities:
+                available_capacities = default_capacities
+        else:
+            # Для категорії "Інша" показуємо дефолтний список
+            available_capacities = default_capacities
 
-        engine_capacity = st.number_input("Об'єм двигуна (л)", min_value=0.5, max_value=8.0, value=suggested_capacity,
-                                          step=0.1)
+        # Виводимо виключно випадаючий список (selectbox)
+        engine_capacity = st.selectbox("Об'єм двигуна (л)", available_capacities)
 
 # Кнопка та логіка (зміни лише в передачі "Other")
 st.markdown("---")
