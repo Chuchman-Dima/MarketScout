@@ -52,6 +52,7 @@ else:
 
 #  Розпаковка даних
 valid_marks = valid_categories.get('valid_marks', [])
+valid_marks = [mark for mark in valid_marks if mark != 'Причеп']
 mark_model_mapping = valid_categories.get('mark_model_mapping', {})
 engine_mapping = valid_categories.get('engine_mapping', {})
 fuel_mapping = valid_categories.get('fuel_mapping', {})
