@@ -13,6 +13,14 @@ model.load_model('models/catboost_car_price_model.cbm')
 # Завантажуємо збережені категорії
 try:
     categories = joblib.load('models/valid_categories.pkl')
+    
+    if 'valid_marks' in categories:
+        categories['valid_marks'] = [m for m in categories['valid_marks'] if m != 'Причеп']
+        
+    for mapping_key in ['mark_model_mapping', 'engine_mapping', 'fuel_mapping', 'gearbox_mapping']:
+        if mapping_key in categories and 'Причеп' in categories[mapping_key]:
+            del categories[mapping_key]['Причеп']
+            
 except FileNotFoundError:
     categories = {}
 
