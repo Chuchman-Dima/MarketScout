@@ -107,6 +107,7 @@ class CarFeatures(BaseModel):
     Km_per_Year: float = Field(..., ge=0)
     is_EV: int = Field(..., ge=0, le=1)
     is_suspicious_mileage: int = Field(..., ge=0, le=1)
+    is_new: int = Field(..., ge=0, le=1)
 
     @field_validator("Mileage", "Engine_Capacity", "Km_per_Year")
     @classmethod
@@ -169,6 +170,7 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
             "Model":                "Модель",
             "is_EV":                "Електро",
             "is_suspicious_mileage": "Підозр. пробіг",
+            "is_new":               "Нове авто (≤3р)",
         }
         shap_dict = {
             label_map.get(f, f): round(float(v), 1)
@@ -274,6 +276,8 @@ def predict_depreciation(req: DepreciationRequest):
             current["Age"]      += year_offset
             current["Mileage"]  += req.annual_mileage * year_offset
             current["Km_per_Year"] = current["Mileage"] / (current["Age"] + 1)
+            current["is_new"]   = int(current["Age"] <= 3)
+            current["is_suspicious_mileage"] = int(current["Age"] > 10 and current["Mileage"] < 50)
 
             df  = build_dataframe(current)
             raw = model.predict(df)[0]
