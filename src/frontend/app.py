@@ -317,10 +317,11 @@ with col_main:
 
     # ── РОЗРАХУНОК ───────────────────────────────
     if calculate_btn:
-        age          = CURRENT_YEAR - year
-        km_per_year  = mileage / (age + 1)
-        is_ev        = 1 if fuel_type == "Електро" else 0
+        age           = CURRENT_YEAR - year
+        km_per_year   = mileage / (age + 1)
+        is_ev         = 1 if fuel_type == "Електро" else 0
         is_suspicious = 1 if (age >= 3 and km_per_year < 5) else 0
+        is_new        = 1 if age <= 3 else 0
 
         payload = {
             "Mark":                  "Other" if mark == "Інша" else mark,
@@ -333,6 +334,7 @@ with col_main:
             "Km_per_Year":           float(km_per_year),
             "is_EV":                 int(is_ev),
             "is_suspicious_mileage": int(is_suspicious),
+            "is_new":                int(is_new),
         }
 
         progress = st.progress(0, text="Аналізуємо ринкові дані…")
