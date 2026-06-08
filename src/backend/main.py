@@ -139,7 +139,10 @@ def process_prediction(raw_value: float) -> float:
 
 def build_dataframe(car_dict: dict) -> pd.DataFrame:
     """Формує DataFrame з одного словника авто."""
-    return pd.DataFrame([car_dict])
+    df = pd.DataFrame([car_dict])
+    if "is_new" in df.columns:
+        df = df.drop(columns=["is_new"])
+    return df
 
 
 def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
