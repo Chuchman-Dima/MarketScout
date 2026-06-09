@@ -123,11 +123,13 @@
 2) Відкрийте додаток: Перейдіть у браузері за адресою: http://localhost:8501
 
 -----
+<img width="1425" height="824" alt="image" src="https://github.com/user-attachments/assets/1a8154a1-c5fd-451c-b481-70ededd6d50c" />
+<img width="1427" height="523" alt="image" src="https://github.com/user-attachments/assets/2ca11bf2-a433-4dee-93be-1a56dd57bec1" />
+<img width="1416" height="773" alt="image" src="https://github.com/user-attachments/assets/a39dc7e0-2bf1-4bae-85a1-970356bac2a5" />
+<img width="1414" height="671" alt="image" src="https://github.com/user-attachments/assets/dce3f561-5a2c-4c54-bf84-2bcdcec6e502" />
+<img width="1419" height="261" alt="image" src="https://github.com/user-attachments/assets/7c5fa504-e78c-4bb1-9d58-67379d13d0f6" />
 
-<img width="1431" height="823" alt="Знімок екрана 2026-04-23 212709" src="https://github.com/user-attachments/assets/edc24a40-ff06-4983-a569-efebbfc71316" />
-<img width="1459" height="490" alt="Знімок екрана 2026-04-23 212734" src="https://github.com/user-attachments/assets/1aae102a-c29c-436e-9f11-ea22dac4f598" />
-<img width="1425" height="428" alt="Знімок екрана 2026-04-23 212753" src="https://github.com/user-attachments/assets/e248b797-69c3-436a-928c-259dc50c7dad" />
-<img width="1415" height="762" alt="Знімок екрана 2026-04-23 212813" src="https://github.com/user-attachments/assets/22261171-524f-4780-8651-b0dde1a29516" />
+
 
 -----
 
