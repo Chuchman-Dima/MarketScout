@@ -2,11 +2,35 @@ import requests
 import pandas as pd
 import os
 import time
+from dotenv import load_dotenv
 
-API_KEY = '***********************************' # Вставте свій API ключ
-# API_KEY = os.getenv("MY_API_KEY")
-FILE_NAME = '../../data/cars_dataset.csv'
-MAX_REQUESTS = 2000
+# .env лежить в корені проєкту (AUTORIA Project), а скрипт запускається з src/parser -
+# тому явно вказуємо шлях, щоб load_dotenv() точно його знайшов незалежно від того,
+# звідки саме запущено файл.
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+
+# Ключ беремо з .env, а НЕ прописуємо в коді напряму (щоб не засвітити його знову).
+# У файлі .env (в корені проєкту) має бути рядок: MY_API_KEY=твій_ключ
+API_KEY = os.getenv("MY_API_KEY")
+
+if not API_KEY:
+    raise RuntimeError(
+        "Не знайдено MY_API_KEY. Перевір, що в .env є рядок MY_API_KEY=... "
+        "і що .env підвантажується (наприклад через python-dotenv)."
+    )
+
+FILE_NAME = '../../data/new_cars_dataset.csv'
+
+# Тимчасово зменшено для безпечного тестування - у тебе пакет всього на 100 запитів.
+MAX_REQUESTS = 5
+
+
+def safe_get(dct, key, default=None):
+    """Безпечно дістає значення з словника, навіть якщо dct = None."""
+    if not isinstance(dct, dict):
+        return default
+    value = dct.get(key, default)
+    return value if value is not None else default
 
 
 def get_collected_ids():
@@ -61,9 +85,15 @@ while requests_made < MAX_REQUESTS:
             break
 
         page += 1
-        time.sleep(0.5)
+        time.sleep(1.5)  # збільшено з 0.5 - щоб уникнути rate limit по частоті запитів
     else:
+        # ГОЛОВНА ЗМІНА: друкуємо тіло відповіді, щоб побачити реальну причину помилки
         print(f"Пошук не вдався. Код: {search_res.status_code}")
+        print(f"Тіло відповіді: {search_res.text[:1000]}")
+
+        if search_res.status_code == 429:
+            print("429 Too Many Requests - або вичерпано ліміт пакету, "
+                  "або перевищено дозволену частоту запитів (rps/rpm).")
         break
 
 # Завантажуємо деталі для знайдених ID
@@ -88,31 +118,83 @@ else:
 
         if res.status_code == 200:
             data = res.json()
-
-            # Обробка даних із захистом від відсутності полів
-            mark_name = data.get('markName', '')
-            model_name = data.get('modelName', '')
-            auto_data = data.get('autoData', {})
+            auto_data = data.get('autoData', {}) or {}
+            photo_data = data.get('photoData', {}) or {}
+            level_data = data.get('levelData', {}) or {}
+            phone_data = data.get('userPhoneData', {}) or {}
+            description = data.get('description', '') or ''
 
             car_entry = {
+                # --- Ідентифікатори ---
                 'ID': car_id,
-                'Mark': mark_name,
-                'Model': model_name,
-                'Year': auto_data.get('year', 0),
-                'Price_USD': data.get('USD', 0),
-                'Mileage': auto_data.get('raceInt', 0),
-                'Engine': auto_data.get('engineVolume', 0),
-                'Fuel': auto_data.get('fuelName', ''),
-                'Gearbox': auto_data.get('gearboxName', '')
+                'Mark': safe_get(data, 'markName', ''),
+                'MarkId': safe_get(data, 'markId', 0),
+                'Model': safe_get(data, 'modelName', ''),
+                'ModelId': safe_get(data, 'modelId', 0),
+                'CategoryId': safe_get(auto_data, 'categoryId', safe_get(data, 'categoryId', 0)),
+
+                # --- Ціна ---
+                'Price_USD': safe_get(data, 'USD', 0),
+                'Price_UAH': safe_get(data, 'UAH', 0),
+                'Price_EUR': safe_get(data, 'EUR', 0),
+                'Main_Currency': safe_get(auto_data, 'mainCurrency', safe_get(data, 'mainCurrency', '')),
+                'Auction_Possible': safe_get(data, 'auctionPossible', False),
+
+                # --- Технічні характеристики ---
+                'Year': safe_get(auto_data, 'year', safe_get(data, 'year', 0)),
+                'Mileage': safe_get(auto_data, 'raceInt', 0),
+                'Engine': safe_get(auto_data, 'engineVolume', 0),
+                'Fuel': safe_get(auto_data, 'fuelName', ''),
+                'Gearbox': safe_get(auto_data, 'gearboxName', ''),
+                'Body': safe_get(auto_data, 'bodyName', ''),
+                'Color': safe_get(auto_data, 'colorName', ''),
+                'Drive': safe_get(auto_data, 'driveName', ''),
+                'Wheel': safe_get(auto_data, 'wheelName', ''),
+                'SeatsNumber': safe_get(auto_data, 'seatsNumber', 0),
+                'DoorsNumber': safe_get(auto_data, 'doorsNumber', 0),
+                'Custom': safe_get(auto_data, 'custom', safe_get(data, 'custom', 0)),
+                'ConditionId': safe_get(auto_data, 'conditionId', 0),
+                'StatusId': safe_get(auto_data, 'statusId', 0),
+                'WithVideo': safe_get(auto_data, 'withVideo', safe_get(data, 'withVideo', False)),
+
+                # --- Локація / продавець ---
+                'City': safe_get(data, 'locationCityName', ''),
+                'UserId': safe_get(data, 'userId', 0),
+                'Is_Dealer': bool(safe_get(data, 'isAutoAddedByPartner', False)),
+                'PartnerId': safe_get(data, 'partnerId', 0),
+                'Phone_Verified': bool(safe_get(phone_data, 'phoneId', 0)),
+
+                # --- Обмін / торг ---
+                'Exchange_Possible': safe_get(data, 'exchangePossible', False),
+                'Exchange_Type': safe_get(data, 'exchangeType', ''),
+
+                # --- Оголошення / активність ---
+                'Add_Date': safe_get(data, 'addDate', ''),
+                'Update_Date': safe_get(data, 'updateDate', ''),
+                'Expire_Date': safe_get(data, 'expireDate', ''),
+                'Is_Sold': safe_get(auto_data, 'isSold', safe_get(data, 'isSold', False)),
+                'From_Archive': safe_get(auto_data, 'fromArchive', safe_get(data, 'fromArchive', False)),
+                'On_Moderation': safe_get(data, 'onModeration', False),
+                'Chips_Count': safe_get(data, 'chipsCount', 0),  # лічильник (напр. перегляди/ліди), значення умовне
+
+                # --- Топ / реклама ---
+                'Top_Level': safe_get(level_data, 'level', 0),
+                'Top_Label': safe_get(level_data, 'label', 0),
+                'Hot_Type': safe_get(level_data, 'hotType', ''),
+
+                # --- Фото та опис ---
+                'Photos_Count': safe_get(photo_data, 'count', 0),
+                'Description_Length': len(description),
             }
 
             df = pd.DataFrame([car_entry])
             df.to_csv(FILE_NAME, mode='a', index=False, header=not os.path.exists(FILE_NAME))
-            print(f"[{requests_made}/{MAX_REQUESTS}] Збережено: {mark_name} {model_name} (ID: {car_id})")
+            print(f"[{requests_made}/{MAX_REQUESTS}] Збережено: {car_entry['Mark']} {car_entry['Model']} (ID: {car_id})")
 
             time.sleep(1)
         else:
             print(f"Помилка на ID {car_id}: {res.status_code}")
+            print(f"Тіло відповіді: {res.text[:500]}")
 
             if res.status_code == 429:
                 print("Перевищено ліміт запитів API (429 Too Many Requests).")
