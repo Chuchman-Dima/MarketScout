@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 # .env лежить в корені проєкту (AUTORIA Project), а скрипт запускається з src/parser -
 # тому явно вказуємо шлях, щоб load_dotenv() точно його знайшов незалежно від того,
 # звідки саме запущено файл.
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+load_dotenv(dotenv_path=os.path.join(BASE_DIR, '.env'))
 
 # Ключ беремо з .env, а НЕ прописуємо в коді напряму (щоб не засвітити його знову).
 # У файлі .env (в корені проєкту) має бути рядок: MY_API_KEY=твій_ключ
@@ -19,7 +20,7 @@ if not API_KEY:
         "і що .env підвантажується (наприклад через python-dotenv)."
     )
 
-FILE_NAME = '../../data/new_cars_dataset.csv'
+FILE_NAME = os.path.join(BASE_DIR, 'data', 'new_cars_dataset.csv')
 
 # Тимчасово зменшено для безпечного тестування - у тебе пакет всього на 100 запитів.
 MAX_REQUESTS = 5
