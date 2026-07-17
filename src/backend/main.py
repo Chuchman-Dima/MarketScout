@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import joblib
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor
+from catboost import CatBoostRegressor, Pool
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -23,6 +23,27 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("auto_price")
+
+CURRENT_YEAR = 2026
+
+# Статичний список преміум/люкс марок — має ЗБІГАТИСЯ зі списком у main.ipynb,
+# інакше ознака is_luxury_brand на інференсі не відповідатиме тренуванню.
+LUXURY_MARKS = {
+    "Aston Martin", "BMW-Alpina", "Lamborghini", "Rolls-Royce", "Ferrari",
+    "Bentley", "Porsche", "Maserati", "Lexus", "Land Rover", "Jaguar",
+    "Mercedes-Benz", "BMW", "Audi", "Lucid", "Genesis",
+}
+AUTOMATIC_LIKE = {"Автомат", "Типтронік", "Варіатор", "Робот"}
+
+# Порядок ознак має ЗБІГАТИСЯ з `features` у main.ipynb на момент навчання моделі
+MODEL_FEATURE_ORDER = [
+    "Mark", "Model", "Mileage", "Gearbox", "Age",
+    "Fuel_Type", "Engine_Capacity", "Km_per_Year",
+    "is_EV", "is_suspicious_mileage", "is_new",
+    "is_luxury_brand", "Engine_missing", "log_Mileage", "Age_x_Mileage", "Decade",
+    "Gearbox_simple",
+]
+MODEL_CAT_FEATURES = ["Mark", "Model", "Gearbox", "Fuel_Type"]
 
 
 # ─────────────────────────────────────────────
@@ -128,19 +149,39 @@ class DepreciationRequest(BaseModel):
 # ─────────────────────────────────────────────
 def process_prediction(raw_value: float) -> float:
     """
-    Якщо модель повернула логарифм ціни (raw < 50) — застосовуємо exp.
+    Якщо модель повернула логарифм ціни (raw < 50) — застосовуємо expm1.
     Інакше — вже готова ціна в USD.
     """
-    price = np.exp(raw_value) if raw_value < 50 else float(raw_value)
+    price = np.expm1(raw_value) if raw_value < 50 else float(raw_value)
     if not np.isfinite(price) or price <= 0:
         return 0.0
     return round(float(price), 2)
 
 
+def engineer_features(car_dict: dict) -> dict:
+    """
+    Додає похідні ознаки, якими навчалась оновлена модель.
+    """
+    out = dict(car_dict)
+    out["is_luxury_brand"] = int(out["Mark"] in LUXURY_MARKS)
+
+    # ВИПРАВЛЕНО: тепер повертаємо 1 (якщо автомат) або 0 (якщо механіка)
+    out["Gearbox_simple"] = 1 if out["Gearbox"] in AUTOMATIC_LIKE else 0
+
+    out["Engine_missing"] = int(out["Engine_Capacity"] == 0)
+    out["log_Mileage"] = float(np.log1p(out["Mileage"]))
+    out["Age_x_Mileage"] = out["Age"] * out["Mileage"]
+    year = CURRENT_YEAR - out["Age"]
+    out["Decade"] = int(year // 10 * 10)
+    return out
+
+
 def build_dataframe(car_dict: dict) -> pd.DataFrame:
-    """Формує DataFrame з одного словника авто."""
-    df = pd.DataFrame([car_dict])
-    return df
+    """Формує DataFrame з одного словника авто, з похідними ознаками,
+    у тому самому порядку колонок, що й на тренуванні."""
+    enriched = engineer_features(car_dict)
+    df = pd.DataFrame([enriched])
+    return df[MODEL_FEATURE_ORDER]
 
 def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
     """
@@ -150,8 +191,9 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
     """
     try:
         df = build_dataframe(car.model_dump())
+        pool = Pool(df, cat_features=MODEL_CAT_FEATURES)
         shap_matrix = model.get_feature_importance(
-            data=model.Pool(df),
+            data=pool,
             type="ShapValues",
         )
         # shap_matrix: (1, n_features+1) — остання колонка — базове значення
@@ -171,9 +213,15 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
             "is_EV":                "Електро",
             "is_suspicious_mileage": "Підозр. пробіг",
             "is_new":               "Нове авто (≤3р)",
+            "is_luxury_brand":      "Преміум-марка",
+            "Engine_missing":       "Об'єм не вказано",
+            "log_Mileage":          "Пробіг (log)",
+            "Age_x_Mileage":        "Вік × Пробіг",
+            "Decade":               "Десятиліття випуску",
+            "Gearbox_simple":       "Тип КПП (спрощ.)",
         }
         shap_dict = {
-            label_map.get(f, f): round(float(v), 1)
+            label_map.get(f, f): round(float(v) * predicted_price, 1)
             for f, v in zip(feature_names, shap_row)
         }
         # Топ-6 за абсолютним значенням
@@ -190,12 +238,14 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
         fuel_effect = base * 0.03 if car.Fuel_Type in ("Дизель", "Гібрид (HEV)") else -base * 0.01
         gear_effect = base * 0.02 if car.Gearbox == "Автомат" else -base * 0.01
         eng_effect  = base * 0.01 * (car.Engine_Capacity - 1.6) if car.Engine_Capacity > 0 else 0
+        luxury_effect = base * 0.08 if car.Mark in LUXURY_MARKS else 0.0
         return {
             "Вік авто":       round(age_effect, 1),
             "Пробіг":         round(mile_effect, 1),
             "Тип пального":   round(fuel_effect, 1),
             "Коробка передач": round(gear_effect, 1),
             "Об'єм двигуна":  round(eng_effect, 1),
+            "Преміум-марка":  round(luxury_effect, 1),
         }
 
 
