@@ -187,6 +187,8 @@ else:
                 'Description_Length': len(description),
             }
 
+            os.makedirs(os.path.dirname(FILE_NAME), exist_ok=True)
+
             df = pd.DataFrame([car_entry])
             df.to_csv(FILE_NAME, mode='a', index=False, header=not os.path.exists(FILE_NAME))
             print(f"[{requests_made}/{MAX_REQUESTS}] Збережено: {car_entry['Mark']} {car_entry['Model']} (ID: {car_id})")
