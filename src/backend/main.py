@@ -35,6 +35,37 @@ LUXURY_MARKS = {
 }
 AUTOMATIC_LIKE = {"Автомат", "Типтронік", "Варіатор", "Робот"}
 
+# ─────────────────────────────────────────────
+# ЕВРИСТИЧНІ КОРЕКТИВИ (нові поля з API.py / app.py)
+# ─────────────────────────────────────────────
+# ВАЖЛИВО: catboost_car_price_model.cbm НЕ навчена на цих ознаках (їх немає
+# в cars_dataset.csv, на якому тренується main.ipynb). Тому вони НЕ йдуть
+# у MODEL_FEATURE_ORDER і не передаються в model.predict() — CatBoost вимагає
+# точно той самий набір і порядок фіч, що й на тренуванні, інакше впаде.
+#
+# Замість цього застосовуємо їх як прозорий (rule-based) шар поверх ML-ціни:
+# фінальна_ціна = ML_ціна * (1 + сума_корективів). Кожен коректив повертається
+# окремо в price_adjustments, щоб було видно, що порахувала модель, а що —
+# бізнес-правило. Коли ці ознаки з'являться в тренувальному датасеті й модель
+# буде перенавчена — цей шар можна прибрати.
+BODY_TYPES = [
+    "Седан", "Позашляховик / Кросовер", "Хетчбек", "Універсал",
+    "Мінівен", "Купе", "Пікап", "Інше",
+]
+DRIVE_TYPES = ["Передній", "Задній", "Повний", "Не вказано"]
+COLOR_NAMES = [
+    "Чорний", "Білий", "Сірий", "Сріблястий", "Синій",
+    "Червоний", "Зелений", "Інший",
+]
+
+# Кожен коректив — частка (+/-) від базової ML-ціни.
+ADJ_CRASHED = -0.15          # після ДТП
+ADJ_NOT_CUSTOMS = -0.20      # нерозмитнене авто
+ADJ_FIRST_OWNER = 0.03       # перший власник
+ADJ_FULL_DRIVE = 0.04        # повний привід
+ADJ_DEMAND_BODY = 0.03       # затребувані кузови (кросовер/пікап)
+DEMAND_BODY_TYPES = {"Позашляховик / Кросовер", "Пікап"}
+
 # Порядок ознак має ЗБІГАТИСЯ з `features` у main.ipynb на момент навчання моделі
 MODEL_FEATURE_ORDER = [
     "Mark", "Model", "Mileage", "Gearbox", "Age",
@@ -92,7 +123,7 @@ async def lifespan(app: FastAPI):
 # ─────────────────────────────────────────────
 app = FastAPI(
     title="Auto Price Predictor API",
-    version="2.0.0",
+    version="2.1.0",
     description="ML-бекенд для прогнозу ринкової ціни автомобілів",
     lifespan=lifespan,
 )
@@ -129,6 +160,17 @@ class CarFeatures(BaseModel):
     is_EV: int = Field(..., ge=0, le=1)
     is_suspicious_mileage: int = Field(..., ge=0, le=1)
     is_new: int = Field(..., ge=0, le=1)
+
+    # ── Нові поля (не йдуть у ML-модель, лише в евристичний шар корективів) ──
+    Body_Name: str | None = Field(default=None)
+    Drive_Name: str | None = Field(default=None)
+    Color_Name: str | None = Field(default=None)
+    Is_Crashed: bool = Field(default=False)
+    Custom: bool = Field(default=True)          # чи розмитнене
+    First_Owner: bool = Field(default=False)
+    Exchange_Possible: bool = Field(default=False)  # інформаційне, на ціну не впливає
+    Is_Bargain: bool = Field(default=False)          # інформаційне, на ціну не впливає
+    Is_Urgent: bool = Field(default=False)           # інформаційне, на ціну не впливає
 
     @field_validator("Mileage", "Engine_Capacity", "Km_per_Year")
     @classmethod
@@ -249,6 +291,30 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
         }
 
 
+def apply_heuristic_adjustments(car: CarFeatures, base_price: float) -> tuple[float, dict]:
+    """
+    Застосовує rule-based корективи поверх ML-ціни для ознак, яких ще немає
+    в тренувальних даних моделі (див. коментар біля ADJ_* констант вище).
+    Повертає (фінальна_ціна, {назва_коректива: сума_у_$}).
+    """
+    adjustments: dict[str, float] = {}
+
+    if car.Is_Crashed:
+        adjustments["Після ДТП"] = round(base_price * ADJ_CRASHED, 1)
+    if not car.Custom:
+        adjustments["Нерозмитнене"] = round(base_price * ADJ_NOT_CUSTOMS, 1)
+    if car.First_Owner:
+        adjustments["Перший власник"] = round(base_price * ADJ_FIRST_OWNER, 1)
+    if car.Drive_Name == "Повний":
+        adjustments["Повний привід"] = round(base_price * ADJ_FULL_DRIVE, 1)
+    if car.Body_Name in DEMAND_BODY_TYPES:
+        adjustments["Затребуваний кузов"] = round(base_price * ADJ_DEMAND_BODY, 1)
+
+    final_price = base_price + sum(adjustments.values())
+    final_price = max(round(final_price, 2), 0.0)
+    return final_price, adjustments
+
+
 def _model_ready() -> None:
     """Кидає 503 якщо модель не завантажена."""
     if model is None:
@@ -274,7 +340,14 @@ def get_categories():
     """Повертає всі допустимі значення для форми вводу."""
     if not categories:
         raise HTTPException(status_code=404, detail="Категорії не знайдені.")
-    return categories
+    # Довідники для нових (не-ML) полів — тримаємо в бекенді, щоб UI
+    # не хардкодив списки окремо від логіки корективів.
+    return {
+        **categories,
+        "body_types":  BODY_TYPES,
+        "drive_types": DRIVE_TYPES,
+        "color_names": COLOR_NAMES,
+    }
 
 
 @app.post("/predict", tags=["Prediction"])
@@ -288,18 +361,24 @@ def predict_price(car: CarFeatures):
     try:
         df = build_dataframe(car.model_dump())
         raw = model.predict(df)[0]
-        price = process_prediction(raw)
+        base_price = process_prediction(raw)
 
-        if price == 0.0:
+        if base_price == 0.0:
             raise HTTPException(status_code=422, detail="Не вдалося обчислити ціну для цих параметрів.")
 
-        shap_values = compute_shap(car, price)
+        shap_values = compute_shap(car, base_price)
+        final_price, adjustments = apply_heuristic_adjustments(car, base_price)
 
-        log.info(f"Predict: {car.Mark} {car.Model} {car.Age}р {car.Mileage}тис → ${price:,.0f}")
+        log.info(
+            f"Predict: {car.Mark} {car.Model} {car.Age}р {car.Mileage}тис → "
+            f"ML=${base_price:,.0f} корективи={adjustments} → ${final_price:,.0f}"
+        )
 
         return {
-            "predicted_price_usd": price,
+            "predicted_price_usd": final_price,   # фінальна ціна (ML + корективи)
+            "base_ml_price_usd":   base_price,     # чиста ML-ціна без корективів
             "shap_values":         shap_values,
+            "price_adjustments":   adjustments,    # rule-based корективи, $ (не з моделі)
         }
 
     except HTTPException:
@@ -332,6 +411,9 @@ def predict_depreciation(req: DepreciationRequest):
             df  = build_dataframe(current)
             raw = model.predict(df)[0]
             price = process_prediction(raw)
+            # Ознаки на кшталт ДТП/розмитнення не змінюються з роками, тому
+            # застосовуємо ті самі корективи, що й для req.car, до кожного року.
+            price, _ = apply_heuristic_adjustments(req.car, price)
 
             # Ціна не може рости з часом
             if predictions and price > predictions[-1]["Price"]:
@@ -369,10 +451,12 @@ def predict_batch(cars: list[CarFeatures]):
             df    = build_dataframe(car.model_dump())
             raw   = model.predict(df)[0]
             price = process_prediction(raw)
+            price, adjustments = apply_heuristic_adjustments(car, price)
             results.append({
                 "mark":  car.Mark,
                 "model": car.Model,
                 "predicted_price_usd": price,
+                "price_adjustments":   adjustments,
             })
         except Exception as e:
             results.append({

@@ -65,6 +65,8 @@ st.markdown("""
 _defaults = {
     "prediction_done": False,
     "pred_price": 0.0,
+    "base_ml_price": 0.0,
+    "price_adjustments": {},
     "payload": {},
     "compare_list": [],
     "shap_data": {},
@@ -208,6 +210,9 @@ with col_main:
     engine_mapping = valid_categories.get("engine_mapping", {})
     fuel_mapping = valid_categories.get("fuel_mapping", {})
     gearbox_mapping = valid_categories.get("gearbox_mapping", {})
+    body_types = valid_categories.get("body_types", ["Седан", "Позашляховик / Кросовер", "Хетчбек", "Універсал", "Мінівен", "Купе", "Пікап", "Інше"])
+    drive_types = valid_categories.get("drive_types", ["Передній", "Задній", "Повний", "Не вказано"])
+    color_names = valid_categories.get("color_names", ["Чорний", "Білий", "Сірий", "Сріблястий", "Синій", "Червоний", "Зелений", "Інший"])
 
     default_fuels = ["Бензин", "Дизель", "Електро", "Газ", "Гібрид (HEV)"]
     default_capacities = np.arange(1.0, 8.2, 0.2).round(1).tolist()
@@ -264,6 +269,17 @@ with col_main:
                         "is_EV": 1 if c["fuel"] == "Електро" else 0,
                         "is_suspicious_mileage": 1 if (age >= 3 and km_per_year < 5) else 0,
                         "is_new": 1 if age <= 3 else 0,
+                        # Старі збережені авто (до цього оновлення) можуть не мати цих
+                        # ключів — беремо безпечні дефолти, як у CarFeatures на бекенді.
+                        "Body_Name": c.get("body"),
+                        "Drive_Name": c.get("drive"),
+                        "Color_Name": c.get("color"),
+                        "Is_Crashed": bool(c.get("crashed", False)),
+                        "Custom": bool(c.get("custom", True)),
+                        "First_Owner": bool(c.get("first_owner", False)),
+                        "Exchange_Possible": bool(c.get("exchange", False)),
+                        "Is_Bargain": bool(c.get("bargain", False)),
+                        "Is_Urgent": bool(c.get("urgent", False)),
                     })
                 try:
                     res_batch = requests.post(f"{BACKEND_URL}/predict_batch", json=payloads, timeout=60)
@@ -340,31 +356,34 @@ with col_main:
         # ── РОЗШИРЕНІ ПАРАМЕТРИ (З API.PY) ────────
         with st.expander("⚙️ Додаткові параметри (Нові фічі з парсера)"):
             st.info(
-                "💡 Ці параметри доступні в інтерфейсі, але почнуть впливати на оцінку ШІ тільки після того, як ти перенавчиш CatBoost на новому датасеті та оновиш `main.py`.",
+                "💡 Ці поля впливають на ціну через прозорий шар корективів на бекенді "
+                "(ДТП, розмитнення, привід, кузов, перший власник) — не через саму ML-модель. "
+                "Модель CatBoost ще не перенавчена на цих ознаках, тож повний облік (feature importance, "
+                "взаємодія з іншими фічами) з'явиться після перенавчання на розширеному датасеті. "
+                "Поля торгу/терміновості/обміну — інформаційні, на ціну не впливають.",
                 icon="ℹ️")
             col3, col4, col5 = st.columns(3)
 
             with col3:
                 st.markdown("**Технічні деталі**")
-                body_name = st.selectbox("Кузов",
-                                         ["Седан", "Позашляховик / Кросовер", "Хетчбек", "Універсал", "Мінівен", "Купе",
-                                          "Пікап", "Інше"])
-                drive_name = st.selectbox("Привід", ["Передній", "Задній", "Повний", "Не вказано"])
-                color_name = st.selectbox("Колір",
-                                          ["Чорний", "Білий", "Сірий", "Сріблястий", "Синій", "Червоний", "Зелений",
-                                           "Інший"])
+                body_default = preload.get("body") if preload and preload.get("body") in body_types else body_types[0]
+                body_name = st.selectbox("Кузов", body_types, index=body_types.index(body_default))
+                drive_default = preload.get("drive") if preload and preload.get("drive") in drive_types else drive_types[0]
+                drive_name = st.selectbox("Привід", drive_types, index=drive_types.index(drive_default))
+                color_default = preload.get("color") if preload and preload.get("color") in color_names else color_names[0]
+                color_name = st.selectbox("Колір", color_names, index=color_names.index(color_default))
 
             with col4:
                 st.markdown("**Стан та Походження**")
-                is_crashed = st.checkbox("Після ДТП (Бите)", value=False)
-                is_custom = st.checkbox("Розмитнене авто", value=True)
-                first_owner = st.checkbox("Перший власник", value=False)
+                is_crashed = st.checkbox("Після ДТП (Бите)", value=bool(preload.get("crashed", False)) if preload else False)
+                is_custom = st.checkbox("Розмитнене авто", value=bool(preload.get("custom", True)) if preload else True)
+                first_owner = st.checkbox("Перший власник", value=bool(preload.get("first_owner", False)) if preload else False)
 
             with col5:
                 st.markdown("**Умови продажу**")
-                is_bargain = st.checkbox("Можливий торг", value=True)
-                is_urgent = st.checkbox("Терміновий продаж", value=False)
-                exchange_possible = st.checkbox("Можливий обмін", value=False)
+                is_bargain = st.checkbox("Можливий торг", value=bool(preload.get("bargain", True)) if preload else True)
+                is_urgent = st.checkbox("Терміновий продаж", value=bool(preload.get("urgent", False)) if preload else False)
+                exchange_possible = st.checkbox("Можливий обмін", value=bool(preload.get("exchange", False)) if preload else False)
 
         # ── Індикатор стану ──────────────────────
         age_preview = CURRENT_YEAR - year
@@ -403,6 +422,9 @@ with col_main:
                 "mark": mark, "model": model_name, "year": year,
                 "mileage": mileage, "fuel": fuel_type,
                 "gearbox": gearbox, "engine": engine_capacity,
+                "body": body_name, "drive": drive_name, "color": color_name,
+                "crashed": is_crashed, "custom": is_custom, "first_owner": first_owner,
+                "exchange": exchange_possible, "bargain": is_bargain, "urgent": is_urgent,
             })
             st.toast(f"{mark} {model_name} збережено!", icon="💾")
     with btn_col:
@@ -417,7 +439,6 @@ with col_main:
         is_suspicious = 1 if (age >= 3 and km_per_year < 5) else 0
         is_new = 1 if age <= 3 else 0
 
-        # Формуємо payload ВИКЛЮЧНО з тих полів, які зараз приймає main.py
         payload = {
             "Mark": "Other" if mark == "Інша" else mark,
             "Model": "Other" if model_name == "Інша" else model_name,
@@ -430,6 +451,17 @@ with col_main:
             "is_EV": int(is_ev),
             "is_suspicious_mileage": int(is_suspicious),
             "is_new": int(is_new),
+            # ── Нові поля: у ML-модель не йдуть, застосовуються бекендом
+            # як rule-based корективи поверх ціни (див. main.py) ──
+            "Body_Name": body_name,
+            "Drive_Name": drive_name,
+            "Color_Name": color_name,
+            "Is_Crashed": bool(is_crashed),
+            "Custom": bool(is_custom),
+            "First_Owner": bool(first_owner),
+            "Exchange_Possible": bool(exchange_possible),
+            "Is_Bargain": bool(is_bargain),
+            "Is_Urgent": bool(is_urgent),
         }
 
         progress = st.progress(0, text="Аналізуємо ринкові дані…")
@@ -444,6 +476,8 @@ with col_main:
             if res.status_code == 200:
                 data = res.json()
                 st.session_state.pred_price = data["predicted_price_usd"]
+                st.session_state.base_ml_price = data.get("base_ml_price_usd", data["predicted_price_usd"])
+                st.session_state.price_adjustments = data.get("price_adjustments", {})
                 st.session_state.shap_data = data.get("shap_values", {})
                 st.session_state.payload = payload
                 st.session_state.prediction_done = True
@@ -521,6 +555,20 @@ with col_main:
             )
             with col_score:
                 st.markdown(score_ring_svg(sc, sc_color, sc_label), unsafe_allow_html=True)
+
+        # ── Розбивка: ML-ціна + евристичні корективи ──
+        if st.session_state.price_adjustments:
+            with st.expander("🧮 З чого складається фінальна ціна?"):
+                base_conv = st.session_state.base_ml_price * rates[curr]
+                st.caption(f"Базова оцінка моделі (CatBoost): **{fmt_money(base_conv, curr)}**")
+                for label, amount_usd in st.session_state.price_adjustments.items():
+                    amount_conv = amount_usd * rates[curr]
+                    sign = "+" if amount_usd >= 0 else "−"
+                    st.write(f"{'🟢' if amount_usd >= 0 else '🔴'} {label}: {sign}{fmt_money(abs(amount_conv), curr)}")
+                st.caption(
+                    "Ці корективи — правила, а не результат навчання моделі "
+                    "(модель поки не бачила ці ознаки в тренувальних даних)."
+                )
 
         # ── Попередження про пробіг ──────────────
         if p.get("is_suspicious_mileage") == 1:
