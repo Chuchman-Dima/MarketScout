@@ -4,12 +4,17 @@ __pycache__/
 *$py.class
 
 cars_dataset.csv
+new_cars_dataset_2.csv
 #*.csv
 
 .env
 
 # C extensions
 *.so
+
+# jpg
+*.jpg
+*.jpeg
 
 # Distribution / packaging
 .Python
