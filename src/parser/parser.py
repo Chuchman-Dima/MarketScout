@@ -123,24 +123,34 @@ def get_collected_ids():
 
 
 # ----------------------------------------------------------------------------
-# Фаза 1: пошук нових ID
+# Основний цикл: пошук + деталі, сторінка за сторінкою
 # ----------------------------------------------------------------------------
 
-def find_new_ids(collected, requests_made, budget):
+def run_collection(budget):
     """
-    Гортає сторінки пошуку, збираючи ID авто, яких ще немає у файлі.
+    Пошук нових ID і завантаження деталей йдуть в одному циклі, сторінка за
+    сторінкою: знайшли ID на сторінці -> одразу довантажили деталі -> лог
+    прогресу -> наступна сторінка. Це навмисно, а не двофазно (спершу весь
+    пошук, потім усі деталі) з двох причин:
 
-    Продовжує з останньої опрацьованої сторінки (parser_state.json), а не з
-    нуля. Зупиняється, коли зібрано достатньо ID під залишок бюджету, коли
-    скінчились сторінки, або коли витрачено весь budget.
+    1. Видимий прогрес. При великому budget "спершу весь пошук" міг би йти
+       сотні сторінок без жодного логу, поки не набере достатньо ID - і
+       процес виглядав би "зависшим", хоча просто мовчки працював.
+    2. Стійкість до переривання. Деталі зберігаються в CSV одразу, а не
+       після завершення всього пошуку - тож переривання (Ctrl+C, крах)
+       ніколи не залишає бюджет витраченим "в нікуди", без збережених даних.
 
-    Повертає (to_download, requests_made). Стан (сторінка) зберігається
-    на диск для наступного запуску.
+    Повертає requests_made.
     """
-    to_download = []
+    collected = get_collected_ids()
+    logger.info(f"Вже зібрано: {len(collected)} авто.")
+
+    requests_made = 0
     page = load_state()
+    current_year = datetime.datetime.now().year
+    total_saved = 0
 
-    logger.info(f"Шукаємо нові авто, починаючи зі сторінки {page}...")
+    logger.info(f"Починаємо збір, стартова сторінка пошуку: {page}...")
 
     while requests_made < budget:
         search_url = (
@@ -167,24 +177,48 @@ def find_new_ids(collected, requests_made, budget):
             break
 
         new_ids = [str(i) for i in all_ids if str(i) not in collected]
-        for car_id in new_ids:
-            if car_id not in to_download:
-                to_download.append(car_id)
 
-        remaining_budget = budget - requests_made
-        if len(to_download) >= remaining_budget:
-            to_download = to_download[:remaining_budget]
-            break
+        for car_id in new_ids:
+            if requests_made >= budget:
+                break
+
+            info_url = f'https://developers.ria.com/auto/info?api_key={API_KEY}&auto_id={car_id}'
+
+            requests_made += 1
+            res = fetch(info_url)
+
+            if res is None:
+                time.sleep(2)
+                continue
+
+            if res.status_code == 200:
+                car_entry = parse_car_entry(res.json(), car_id, current_year)
+                save_entry(car_entry)
+                # Одразу позначаємо як зібраний - інакше той самий ID міг би
+                # знову потрапити в new_ids на іншій сторінці (сортування
+                # видачі може зсуватись під час довгого прогону) і завантажитись
+                # повторно, витрачаючи бюджет на дублікат.
+                collected.add(car_id)
+                total_saved += 1
+                time.sleep(1)
+            else:
+                logger.error(f"Помилка на ID {car_id}: {res.status_code}")
+                logger.error(f"Тіло відповіді: {res.text[:500]}")
+                time.sleep(2)
 
         page += 1
+        save_state(page)
+        logger.info(
+            f"[Сторінка {page}] Всього збережено нових авто: {total_saved}. "
+            f"Використано запитів: {requests_made}/{budget}.")
         time.sleep(1.5)
 
-    save_state(page)
-    return to_download, requests_made
+    logger.info(f"--- Збір завершено. Нових авто збережено: {total_saved}. ---")
+    return requests_made
 
 
 # ----------------------------------------------------------------------------
-# Фаза 2: деталі по кожному авто
+# Довантаження фото - окремо від API, паралельно, без витрати бюджету
 # ----------------------------------------------------------------------------
 
 def parse_car_entry(data, car_id, current_year):
@@ -327,42 +361,6 @@ def save_entry(car_entry):
     )
 
 
-def download_car_details(to_download, requests_made, budget):
-    """Тягне /auto/info для кожного ID зі списку і одразу дописує рядок у CSV."""
-    if not to_download:
-        logger.info("Нових авто не знайдено або всі доступні вже в базі.")
-        return requests_made
-
-    logger.info(f"Знайдено {len(to_download)} нових автомобілів. Починаємо завантаження деталей...")
-    current_year = datetime.datetime.now().year
-
-    for car_id in to_download:
-        if requests_made >= budget:
-            break
-
-        info_url = f'https://developers.ria.com/auto/info?api_key={API_KEY}&auto_id={car_id}'
-
-        requests_made += 1
-        res = fetch(info_url)
-
-        if res is None:
-            time.sleep(2)
-            continue
-
-        if res.status_code == 200:
-            car_entry = parse_car_entry(res.json(), car_id, current_year)
-            save_entry(car_entry)
-            logger.info(
-                f"[{requests_made}/{budget}] Збережено: {car_entry['Mark']} {car_entry['Model']} (ID: {car_id})")
-            time.sleep(1)
-        else:
-            logger.error(f"Помилка на ID {car_id}: {res.status_code}")
-            logger.error(f"Тіло відповіді: {res.text[:500]}")
-            time.sleep(2)
-
-    return requests_made
-
-
 # ----------------------------------------------------------------------------
 # Фаза 3: довантаження фото - окремо від API, паралельно, без витрати бюджету
 # ----------------------------------------------------------------------------
@@ -431,15 +429,8 @@ def download_pending_photos(max_workers=PHOTO_DOWNLOAD_WORKERS):
 # ----------------------------------------------------------------------------
 
 def main():
-    collected = get_collected_ids()
-    logger.info(f"Вже зібрано: {len(collected)} авто.")
+    requests_made = run_collection(MAX_REQUESTS)
 
-    requests_made = 0
-
-    to_download, requests_made = find_new_ids(collected, requests_made, MAX_REQUESTS)
-    requests_made = download_car_details(to_download, requests_made, MAX_REQUESTS)
-
-    logger.info("--- Основний збір даних завершено ---")
     logger.info(f"Використано запитів: {requests_made} із {MAX_REQUESTS}.")
 
     download_pending_photos()
