@@ -4,7 +4,6 @@ __pycache__/
 *$py.class
 
 cars_dataset.csv
-new_cars_dataset_2.csv
 #*.csv
 
 .env
