@@ -1,0 +1,431 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}</style><style>:root{color-scheme:light dark;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}}:root[data-theme="dark"]{color-scheme:dark;--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}:root[data-theme="light"]{color-scheme:light}@media print{:root,:root[data-theme="dark"]{color-scheme:light;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}}body{background:var(--md-bg);color:var(--md-text);max-width:720px;margin:0 auto;padding:32px;display:flex;flex-direction:column;gap:10px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'SF Pro','Segoe UI',sans-serif;overflow-wrap:break-word}body>:first-child{margin-top:0}h1,h2,h3,h4,h5,h6{margin:6px 0 0;line-height:1.25;font-weight:600;text-wrap:balance}h1{font-size:1.35em}h2{font-size:1.15em;color:var(--md-muted)}h3,h4,h5,h6{font-size:1em}p,ul,ol,blockquote,table,pre,hr{margin:0}strong{font-weight:600}a{color:var(--md-link);text-decoration:none}a:hover{text-decoration:underline}ul,ol{display:flex;flex-direction:column;gap:6px;padding-left:22px}ul{list-style:disc}ol{list-style:decimal}:is(li,td,th)>*+:is(p,ul,ol,blockquote){margin-top:6px}blockquote{display:flex;flex-direction:column;gap:10px;border-left:2px solid var(--md-rule);padding-left:10px;color:var(--md-muted)}:not(pre)>code{background:var(--md-fill);padding:1px 3px;border-radius:4px;font:.92em 'SF Mono',ui-monospace,Menlo,Consolas,monospace}a>code{background:none;color:inherit}pre{background:var(--md-fill);padding:10px 12px;border-radius:6px;overflow-x:auto;font:12px/1.5 'SF Mono',ui-monospace,Menlo,Consolas,monospace;margin-block:4px}pre code{background:none;padding:0;font:inherit}table{width:100%;border-collapse:separate;border-spacing:2px;font:inherit}th,td{padding:6px 8px;border-radius:3px;text-align:left;vertical-align:top}th{background:var(--md-fill-strong);font-weight:600}td{background:var(--md-fill)}:is(th,td) :not(pre)>code{background:transparent}hr{border:0;border-top:1px solid var(--md-rule-strong);margin-block:10px}img{max-width:100%;height:auto;border-radius:4px}</style>
+</head><body>
+<h1>Документація: парсер Auto.RIA</h1>
+<p>Скрипт збирає оголошення про легкові авто (<code>category_id=1</code>) через <code>developers.ria.com</code> і складає їх у плаский CSV для ML.</p>
+<h2>Як це працює</h2>
+<ol>
+<li><strong>Пошук</strong>: <code>/auto/search</code> віддає 100 ID за сторінку.</li>
+<li><strong>Деталі</strong>: для кожного нового ID йде запит <code>/auto/info</code>, JSON перетворюється на один рядок (<code>parse_car_entry</code>) і одразу дописується в CSV (<code>save_entry</code>).</li>
+<li><strong>Стан</strong>: після кожної сторінки номер зберігається в <code>parser_state.json</code>, тож після зупинки збір продовжується з того ж місця.</li>
+<li><strong>Фото</strong>: після збору <code>download_pending_photos</code> паралельно (8 потоків) качає головні фото з CDN. Це не витрачає бюджет API.</li>
+</ol>
+<p><strong>Ліміти:</strong> <code>MAX_REQUESTS = 98000</code> (пошук і <code>/info</code> рахуються в один бюджет), тайм-аут 10 с, пауза 1 с між авто і 1.5 с між сторінками. При <code>429</code> скрипт чекає <code>Retry-After</code> і <strong>не повторює</strong> запит.</p>
+<p><strong>Файли</strong> (у <code>data/</code>): <code>new_cars_dataset_2.csv</code> (датасет), <code>parser_state.json</code>, <code>parser.log</code>, <code>photos/</code>. Ключ береться з <code>.env</code> (<code>MY_API_KEY</code>).</p>
+<h2>Функції</h2>
+<table>
+<thead>
+<tr>
+<th>Функція</th>
+<th>Що робить</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>safe_get</code></td>
+<td>Дістає ключ зі словника; якщо словника немає або значення <code>None</code>, повертає default</td>
+</tr>
+<tr>
+<td><code>fetch</code></td>
+<td>GET із тайм-аутом; <code>None</code> при мережевій помилці або 429</td>
+</tr>
+<tr>
+<td><code>load_state</code> / <code>save_state</code></td>
+<td>Читає й пише останню сторінку пошуку</td>
+</tr>
+<tr>
+<td><code>get_collected_ids</code></td>
+<td>ID, які вже є в CSV (для пропуску дублів)</td>
+</tr>
+<tr>
+<td><code>run_collection</code></td>
+<td>Основний цикл: сторінка пошуку, потім деталі нових ID, лог</td>
+</tr>
+<tr>
+<td><code>parse_car_entry</code></td>
+<td>Сирий JSON перетворюється на словник фіч</td>
+</tr>
+<tr>
+<td><code>save_entry</code></td>
+<td>Дописує один рядок у CSV (<code>utf-8-sig</code>)</td>
+</tr>
+<tr>
+<td><code>download_pending_photos</code></td>
+<td>Докачує фото для рядків із порожнім <code>Main_Photo_Path</code></td>
+</tr>
+</tbody>
+</table>
+<h2>Фічі (колонки CSV)</h2>
+<p>Значення за замовчуванням, якщо поля немає у відповіді: <code>0</code> для чисел, <code>''</code> для рядків, <code>False</code> для булевих. Позначка ⚠️ означає, що зміст виведено з назви поля, тож звір із документацією RIA.</p>
+<h3>Ідентифікатори</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ID</code></td>
+<td>ID оголошення</td>
+</tr>
+<tr>
+<td><code>Mark</code> / <code>MarkId</code></td>
+<td>Марка авто (назва / id)</td>
+</tr>
+<tr>
+<td><code>Model</code> / <code>ModelId</code></td>
+<td>Модель (назва / id)</td>
+</tr>
+<tr>
+<td><code>Modification</code></td>
+<td>Версія/комплектація (<code>autoData.version</code>)</td>
+</tr>
+<tr>
+<td><code>CategoryId</code></td>
+<td>Категорія транспорту (тут завжди легкові)</td>
+</tr>
+</tbody>
+</table>
+<h3>Ціна</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Price_USD</code>, <code>Price_UAH</code>, <code>Price_EUR</code></td>
+<td>Ціна у трьох валютах. <code>Price_USD</code> зазвичай ціль для регресії</td>
+</tr>
+<tr>
+<td><code>Main_Currency</code></td>
+<td>Валюта, в якій продавець вказав ціну</td>
+</tr>
+<tr>
+<td><code>Auction_Possible</code></td>
+<td>Чи можливий торг/аукціон ⚠️</td>
+</tr>
+</tbody>
+</table>
+<h3>Технічні характеристики</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Year</code></td>
+<td>Рік випуску</td>
+</tr>
+<tr>
+<td><code>Age</code></td>
+<td>Вік авто: поточний рік мінус <code>Year</code> (0, якщо рік некоректний)</td>
+</tr>
+<tr>
+<td><code>Mileage_K</code></td>
+<td>Пробіг, тис. км (<code>raceInt</code>)</td>
+</tr>
+<tr>
+<td><code>Mileage_Per_Year</code></td>
+<td>Пробіг на рік: <code>Mileage_K / Age</code> (для <code>Age = 0</code> ділиться на 1)</td>
+</tr>
+<tr>
+<td><code>Engine_Volume</code></td>
+<td>Об'єм двигуна, л</td>
+</tr>
+<tr>
+<td><code>Fuel_Name</code> / <code>Fuel_Id</code></td>
+<td>Тип пального</td>
+</tr>
+<tr>
+<td><code>Gearbox_Name</code> / <code>Gearbox_Id</code></td>
+<td>Коробка передач</td>
+</tr>
+<tr>
+<td><code>Body_Name</code> / <code>Body_Id</code></td>
+<td>Тип кузова</td>
+</tr>
+<tr>
+<td><code>Color_Name</code> / <code>Color_Id</code></td>
+<td>Колір</td>
+</tr>
+<tr>
+<td><code>Drive_Name</code> / <code>Drive_Id</code></td>
+<td>Привід</td>
+</tr>
+<tr>
+<td><code>Wheel_Name</code></td>
+<td>Тип керма/коліс ⚠️</td>
+</tr>
+<tr>
+<td><code>SeatsNumber</code>, <code>DoorsNumber</code></td>
+<td>Кількість місць і дверей</td>
+</tr>
+</tbody>
+</table>
+<h3>Походження, стан, перевірки</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Custom</code></td>
+<td>Ознака розмитнення ⚠️</td>
+</tr>
+<tr>
+<td><code>Country_Origin_Id</code></td>
+<td>Країна походження (id)</td>
+</tr>
+<tr>
+<td><code>ConditionId</code></td>
+<td>Стан авто (id) ⚠️</td>
+</tr>
+<tr>
+<td><code>StatusId</code></td>
+<td>Статус оголошення/авто (id) ⚠️</td>
+</tr>
+<tr>
+<td><code>Is_Crashed</code></td>
+<td>Було ДТП (<code>isDtp</code> <strong>або</strong> <code>isCrashed</code>)</td>
+</tr>
+<tr>
+<td><code>Damage_Description</code></td>
+<td>Текстовий опис пошкоджень</td>
+</tr>
+<tr>
+<td><code>Is_Leasing</code></td>
+<td>Авто у лізингу</td>
+</tr>
+<tr>
+<td><code>Has_VIN</code></td>
+<td>VIN вказано</td>
+</tr>
+<tr>
+<td><code>Is_Checked_VIN</code></td>
+<td>VIN перевірено сайтом</td>
+</tr>
+<tr>
+<td><code>VIN</code></td>
+<td>Сам VIN (для моделі не потрібен, це ідентифікатор)</td>
+</tr>
+<tr>
+<td><code>VIN_Has_Restrictions</code></td>
+<td>За VIN є обмеження (<code>checkedVin.hasRestrictions</code>)</td>
+</tr>
+<tr>
+<td><code>Has_Plate</code> / <code>Is_Checked_Plate</code></td>
+<td>Номерний знак вказано / перевірено</td>
+</tr>
+</tbody>
+</table>
+<h3>Локація та продавець</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>State_Id</code> / <code>State_Name</code></td>
+<td>Область (id / назва)</td>
+</tr>
+<tr>
+<td><code>City_Id</code> / <code>City</code></td>
+<td>Місто (id / назва)</td>
+</tr>
+<tr>
+<td><code>UserId</code></td>
+<td>ID продавця</td>
+</tr>
+<tr>
+<td><code>Is_Dealer</code></td>
+<td>Додано партнером (автосалоном)</td>
+</tr>
+<tr>
+<td><code>PartnerId</code> / <code>Dealer_Name</code></td>
+<td>Партнер / назва салону</td>
+</tr>
+<tr>
+<td><code>Seller_Type</code></td>
+<td>Тип продавця ⚠️</td>
+</tr>
+<tr>
+<td><code>Phone_Verified</code></td>
+<td>Телефон продавця підтверджено (є <code>phoneId</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3>Обмін</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Exchange_Possible</code></td>
+<td>Продавець розглядає обмін</td>
+</tr>
+<tr>
+<td><code>Exchange_Type</code></td>
+<td>Умови/тип обміну ⚠️</td>
+</tr>
+</tbody>
+</table>
+<h3>Оголошення та активність</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Add_Date</code>, <code>Update_Date</code>, <code>Expire_Date</code></td>
+<td>Дати створення, оновлення, закінчення</td>
+</tr>
+<tr>
+<td><code>Is_Sold</code></td>
+<td>Позначено як продане</td>
+</tr>
+<tr>
+<td><code>From_Archive</code></td>
+<td>Оголошення з архіву</td>
+</tr>
+<tr>
+<td><code>On_Moderation</code></td>
+<td>На модерації</td>
+</tr>
+<tr>
+<td><code>Views_Total</code> / <code>Views_Today</code></td>
+<td>Перегляди всього / за сьогодні</td>
+</tr>
+<tr>
+<td><code>Bookmarks_Count</code></td>
+<td>Скільки разів додали в обране</td>
+</tr>
+<tr>
+<td><code>Chips_Count</code></td>
+<td>Кількість «чіпів» (мітки/теги оголошення) ⚠️</td>
+</tr>
+</tbody>
+</table>
+<h3>Топ і реклама</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Top_Level</code></td>
+<td>Рівень просування (<code>levelData.level</code>)</td>
+</tr>
+<tr>
+<td><code>Top_Label</code></td>
+<td>Мітка просування ⚠️</td>
+</tr>
+<tr>
+<td><code>Hot_Type</code></td>
+<td>Тип «гарячого» оголошення</td>
+</tr>
+<tr>
+<td><code>Badges_Count</code></td>
+<td>Кількість бейджів</td>
+</tr>
+</tbody>
+</table>
+<h3>Контент</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Що означає</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ad_Link</code></td>
+<td>Повне посилання на оголошення</td>
+</tr>
+<tr>
+<td><code>Main_Photo_URL</code></td>
+<td>URL головного фото</td>
+</tr>
+<tr>
+<td><code>Main_Photo_Path</code></td>
+<td>Локальний шлях до фото (порожній, доки не відпрацює фаза фото)</td>
+</tr>
+<tr>
+<td><code>Photos_Count</code></td>
+<td>Кількість фото</td>
+</tr>
+<tr>
+<td><code>With_Video</code></td>
+<td>Є відео</td>
+</tr>
+<tr>
+<td><code>Description_Length</code></td>
+<td>Довжина опису, символів</td>
+</tr>
+<tr>
+<td><code>Options_Count</code></td>
+<td>Кількість опцій/комплектації (<code>optionIdList</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3>NLP-фічі з опису (пошук ключових слів, регістр ігнорується)</h3>
+<table>
+<thead>
+<tr>
+<th>Колонка</th>
+<th>Спрацьовує на</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Desc_Urgent</code></td>
+<td>«терміново», «срочно»</td>
+</tr>
+<tr>
+<td><code>Desc_Bargain</code></td>
+<td>«торг»</td>
+</tr>
+<tr>
+<td><code>Desc_First_Owner</code></td>
+<td>«перший власник», «один власник», «первый владелец», «з салону»</td>
+</tr>
+<tr>
+<td><code>Desc_Ideal</code></td>
+<td>«ідеальний», «идеальное», «сів і поїхав», «не фарбован»</td>
+</tr>
+</tbody>
+</table>
+<h2>На що звернути увагу</h2>
+<ul>
+<li><strong>Пропуски маскуються нулями.</strong> Відсутнє значення й справжній <code>0</code> (наприклад, ціна чи пробіг) виглядають однаково. Перед навчанням варто замінити підозрілі <code>0</code> на <code>NaN</code>.</li>
+<li><strong>Можливий витік цілі.</strong> Якщо ціль <code>Price_USD</code>, то <code>Price_UAH</code>, <code>Price_EUR</code> майже дублюють її, а <code>Is_Sold</code>, <code>Views_*</code>, <code>Bookmarks_Count</code>, <code>Top_*</code> описують стан оголошення після публікації.</li>
+<li><strong>Ідентифікатори не для моделі:</strong> <code>ID</code>, <code>UserId</code>, <code>VIN</code>, <code>Ad_Link</code>, <code>Main_Photo_*</code>, <code>PartnerId</code>.</li>
+<li><strong>Пари <code>*_Name</code> / <code>*_Id</code></strong> несуть ту саму інформацію, тож достатньо однієї з двох.</li>
+<li><strong><code>Age = 0</code></strong> буває і для нового авто, і для некоректного року. Розрізнити їх за самою колонкою не вийде.</li>
+<li><strong>NLP-фічі</strong> шукають підрядок, тому «торг» знайдеться й у слові «торгівля». Це груба евристика.</li>
+</ul>
+
+</body></html>
