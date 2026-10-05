@@ -26,7 +26,7 @@ log = logging.getLogger("auto_price")
 
 CURRENT_YEAR = 2026
 
-# Статичний список преміум/люкс марок — має ЗБІГАТИСЯ зі списком у main.ipynb,
+# Статичний список преміум/люкс марок — має ЗБІГАТИСЯ зі списком у EDA.ipynb,
 # інакше ознака is_luxury_brand на інференсі не відповідатиме тренуванню.
 LUXURY_MARKS = {
     "Aston Martin", "BMW-Alpina", "Lamborghini", "Rolls-Royce", "Ferrari",
@@ -39,7 +39,7 @@ AUTOMATIC_LIKE = {"Автомат", "Типтронік", "Варіатор", "�
 # ЕВРИСТИЧНІ КОРЕКТИВИ (нові поля з API.py / app.py)
 # ─────────────────────────────────────────────
 # ВАЖЛИВО: catboost_car_price_model.cbm НЕ навчена на цих ознаках (їх немає
-# в cars_dataset.csv, на якому тренується main.ipynb). Тому вони НЕ йдуть
+# в cars_dataset.csv, на якому тренується EDA.ipynb). Тому вони НЕ йдуть
 # у MODEL_FEATURE_ORDER і не передаються в model.predict() — CatBoost вимагає
 # точно той самий набір і порядок фіч, що й на тренуванні, інакше впаде.
 #
@@ -66,7 +66,7 @@ ADJ_FULL_DRIVE = 0.04        # повний привід
 ADJ_DEMAND_BODY = 0.03       # затребувані кузови (кросовер/пікап)
 DEMAND_BODY_TYPES = {"Позашляховик / Кросовер", "Пікап"}
 
-# Порядок ознак має ЗБІГАТИСЯ з `features` у main.ipynb на момент навчання моделі
+# Порядок ознак має ЗБІГАТИСЯ з `features` у EDA.ipynb на момент навчання моделі
 MODEL_FEATURE_ORDER = [
     "Mark", "Model", "Mileage", "Gearbox", "Age",
     "Fuel_Type", "Engine_Capacity", "Km_per_Year",
