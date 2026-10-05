@@ -13,6 +13,8 @@ parser_state.json
 
 *.jpg
 
+*.parquet
+
 .env
 
 # C extensions
