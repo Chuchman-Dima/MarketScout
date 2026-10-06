@@ -4,3 +4,4 @@
 {"model": "XGBoost", "MAE": 1943.0, "MAPE": 16.84, "R2": 0.9193}
 {"model": "LightGBM", "MAE": 1942.9, "MAPE": 16.4, "R2": 0.9199}
 {"model": "LightGBM", "MAE": 1942.9, "MAPE": 16.4, "R2": 0.9199}
+{"model": "LightGBM", "MAE": 1942.9, "MAPE": 16.4, "R2": 0.9199}
