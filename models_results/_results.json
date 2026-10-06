@@ -1,0 +1,6 @@
+{"model": "CatBoost", "MAE": 2218.0, "MAPE": 17.73, "R2": 0.8828}
+{"model": "CatBoost", "MAE": 2218.0, "MAPE": 17.73, "R2": 0.8828}
+{"model": "DecisionTree", "MAE": 2709.6, "MAPE": 22.53, "R2": 0.852}
+{"model": "XGBoost", "MAE": 1943.0, "MAPE": 16.84, "R2": 0.9193}
+{"model": "LightGBM", "MAE": 1942.9, "MAPE": 16.4, "R2": 0.9199}
+{"model": "LightGBM", "MAE": 1942.9, "MAPE": 16.4, "R2": 0.9199}
