@@ -19,23 +19,18 @@ def main():
     pipe = build_pipeline()
     pipe.fit(X_train, y_train)
 
-    # 1. Витягуємо натреновану модель та трансформуємо дані
-    # SHAP TreeExplainer очікує саму модель (LGBMRegressor), а не Pipeline
     lgbm_model = pipe.named_steps["model"]
 
-    # Дані мають пройти через CategoricalCaster, щоб отримати тип 'category'
     print("Трансформація тестової вибірки...")
     X_test_transformed = pipe.named_steps["categorize"].transform(X_test)
 
     # Для прискорення розрахунків беремо випадкову підвибірку (наприклад, 2000 авто)
     X_sample = X_test_transformed.sample(n=2000, random_state=42)
 
-    # 2. Ініціалізуємо SHAP
     print("Розрахунок SHAP-значень...")
     explainer = shap.TreeExplainer(lgbm_model)
     shap_values = explainer(X_sample)
 
-    # 3. Будуємо та зберігаємо графіки
     # Summary plot (Beeswarm)
     plt.figure(figsize=(10, 8))
     shap.plots.beeswarm(shap_values, max_display=15, show=False)
