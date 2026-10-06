@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
     log.info("Завантаження моделі…")
     try:
         model = CatBoostRegressor()
-        model.load_model("models/catboost_car_price_model.cbm")
+        model.load_model("models_results/catboost_car_price_model.cbm")
         log.info("Модель завантажена успішно.")
     except Exception as e:
         log.error(f"Помилка завантаження моделі: {e}")
@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
 
     log.info("Завантаження категорій…")
     try:
-        categories = joblib.load("models/valid_categories.pkl")
+        categories = joblib.load("models_results/valid_categories.pkl")
         # Прибираємо «Причеп» зі всіх маппінгів
         categories.get("valid_marks", [])
         if "valid_marks" in categories:
