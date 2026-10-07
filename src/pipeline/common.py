@@ -10,6 +10,7 @@
 """
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -17,19 +18,48 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
 
 RANDOM_SEED = 42
-CAT_FEATURES = ["Mark", "Model", "Gearbox", "Fuel_Type"]
+UNKNOWN = "Не вказано"
 
-DATA_DIR = "../data/parquet"
-RESULTS_PATH = "../data/_results.json"
+# Порядок має збігатися з prepare.py і MODEL_FEATURE_ORDER у src/backend/main.py
+MODEL_FEATURE_ORDER = [
+    "Mark", "Model", "Modification", "Mileage", "Gearbox", "Age",
+    "Fuel_Type", "Engine_Capacity", "Km_per_Year",
+    "Body_Name", "Drive_Name", "Color_Name", "Wheel_Name",
+    "SeatsNumber", "DoorsNumber",
+    "Is_Crashed", "Custom", "First_Owner", "Is_Leasing",
+    "Has_VIN", "Is_Checked_VIN", "VIN_Has_Restrictions",
+    "Has_Plate", "Is_Checked_Plate",
+    "Country_Origin_Id", "ConditionId", "State_Name", "City",
+    "Is_Dealer", "Seller_Type", "Phone_Verified",
+    "Exchange_Possible", "Exchange_Type",
+    "Auction_Possible", "Is_Bargain", "Is_Urgent",
+    "Photos_Count", "With_Video", "Description_Length", "Options_Count",
+    "Desc_Ideal",
+    "is_EV", "is_suspicious_mileage", "is_new",
+    "is_luxury_brand", "Engine_missing", "log_Mileage", "Age_x_Mileage",
+    "Decade", "is_automatic_gearbox",
+]
+
+CAT_FEATURES = [
+    "Mark", "Model", "Modification", "Gearbox", "Fuel_Type",
+    "Body_Name", "Drive_Name", "Color_Name", "Wheel_Name",
+    "Country_Origin_Id", "ConditionId",
+    "State_Name", "City", "Seller_Type", "Exchange_Type",
+]
+
+_PIPELINE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = _PIPELINE_DIR.parents[1]
+DATA_DIR = PROJECT_ROOT / "data" / "parquet"
+RESULTS_PATH = PROJECT_ROOT / "data" / "_results.json"
 
 
 def load_train_test():
     """Повертає (X_train, X_test, y_train_raw, y_test_raw) з parquet,
     підготовлених у prepare.py. y_* - у СИРИХ доларах (не логарифм)."""
-    X_train = pd.read_parquet(f"{DATA_DIR}/X_train.parquet")
-    X_test = pd.read_parquet(f"{DATA_DIR}/X_test.parquet")
-    y_train_raw = pd.read_parquet(f"{DATA_DIR}/y_train.parquet")["Price_USD"]
-    y_test_raw = pd.read_parquet(f"{DATA_DIR}/y_test.parquet")["Price_USD"]
+    X_train = pd.read_parquet(DATA_DIR / "X_train.parquet")
+    X_test = pd.read_parquet(DATA_DIR / "X_test.parquet")
+    y_train_raw = pd.read_parquet(DATA_DIR / "y_train.parquet")["Price_USD"]
+    y_test_raw = pd.read_parquet(DATA_DIR / "y_test.parquet")["Price_USD"]
     return X_train, X_test, y_train_raw, y_test_raw
 
 

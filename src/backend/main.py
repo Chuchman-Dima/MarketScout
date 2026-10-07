@@ -50,8 +50,9 @@ logging.basicConfig(
 log = logging.getLogger("auto_price")
 
 CURRENT_YEAR = 2026
+UNKNOWN = "Не вказано"
 
-# Статичний список преміум/люкс марок — має ЗБІГАТИСЯ зі списком у EDA.ipynb,
+# Статичний список преміум/люкс марок — має ЗБІГАТИСЯ зі списком у prepare.py,
 # інакше ознака is_luxury_brand на інференсі не відповідатиме тренуванню.
 LUXURY_MARKS = {
     "Aston Martin", "BMW-Alpina", "Lamborghini", "Rolls-Royce", "Ferrari",
@@ -60,46 +61,51 @@ LUXURY_MARKS = {
 }
 AUTOMATIC_LIKE = {"Автомат", "Типтронік", "Варіатор", "Робот"}
 
-# ─────────────────────────────────────────────
-# ЕВРИСТИЧНІ КОРЕКТИВИ (нові поля з API.py / app.py)
-# ─────────────────────────────────────────────
-# ВАЖЛИВО: lightgbm_pipeline.pkl НЕ навчена на цих ознаках (їх немає
-# в prepare.py, на якому тренується модель). Тому вони НЕ йдуть
-# у MODEL_FEATURE_ORDER і не передаються в model.predict() — пайплайн вимагає
-# точно той самий набір і порядок фіч, що й на тренуванні, інакше впаде.
-#
-# Замість цього застосовуємо їх як прозорий (rule-based) шар поверх ML-ціни:
-# фінальна_ціна = ML_ціна * (1 + сума_корективів). Кожен коректив повертається
-# окремо в price_adjustments, щоб було видно, що порахувала модель, а що —
-# бізнес-правило. Коли ці ознаки з'являться в тренувальному датасеті й модель
-# буде перенавчена — цей шар можна прибрати.
 BODY_TYPES = [
-    "Седан", "Позашляховик / Кросовер", "Хетчбек", "Універсал",
+    "Не вказано", "Седан", "Позашляховик / Кросовер", "Хетчбек", "Універсал",
     "Мінівен", "Купе", "Пікап", "Інше",
 ]
-DRIVE_TYPES = ["Передній", "Задній", "Повний", "Не вказано"]
+DRIVE_TYPES = ["Не вказано", "Передній", "Задній", "Повний"]
 COLOR_NAMES = [
-    "Чорний", "Білий", "Сірий", "Сріблястий", "Синій",
+    "Не вказано", "Чорний", "Білий", "Сірий", "Сріблястий", "Синій",
     "Червоний", "Зелений", "Інший",
 ]
 
-# Кожен коректив — частка (+/-) від базової ML-ціни.
-ADJ_CRASHED = -0.15          # після ДТП
-ADJ_NOT_CUSTOMS = -0.20      # нерозмитнене авто
-ADJ_FIRST_OWNER = 0.03       # перший власник
-ADJ_FULL_DRIVE = 0.04        # повний привід
-ADJ_DEMAND_BODY = 0.03       # затребувані кузови (кросовер/пікап)
-DEMAND_BODY_TYPES = {"Позашляховик / Кросовер", "Пікап"}
-
-# Порядок ознак має ЗБІГАТИСЯ з `features` у prepare.py на момент навчання моделі
+# Порядок і склад колонок = MODEL_FEATURE_ORDER / CAT_FEATURES у src/pipeline/common.py
 MODEL_FEATURE_ORDER = [
-    "Mark", "Model", "Mileage", "Gearbox", "Age",
+    "Mark", "Model", "Modification", "Mileage", "Gearbox", "Age",
     "Fuel_Type", "Engine_Capacity", "Km_per_Year",
+    "Body_Name", "Drive_Name", "Color_Name", "Wheel_Name",
+    "SeatsNumber", "DoorsNumber",
+    "Is_Crashed", "Custom", "First_Owner", "Is_Leasing",
+    "Has_VIN", "Is_Checked_VIN", "VIN_Has_Restrictions",
+    "Has_Plate", "Is_Checked_Plate",
+    "Country_Origin_Id", "ConditionId", "State_Name", "City",
+    "Is_Dealer", "Seller_Type", "Phone_Verified",
+    "Exchange_Possible", "Exchange_Type",
+    "Auction_Possible", "Is_Bargain", "Is_Urgent",
+    "Photos_Count", "With_Video", "Description_Length", "Options_Count",
+    "Desc_Ideal",
     "is_EV", "is_suspicious_mileage", "is_new",
-    "is_luxury_brand", "Engine_missing", "log_Mileage", "Age_x_Mileage", "Decade",
-    "is_automatic_gearbox",
+    "is_luxury_brand", "Engine_missing", "log_Mileage", "Age_x_Mileage",
+    "Decade", "is_automatic_gearbox",
 ]
-MODEL_CAT_FEATURES = ["Mark", "Model", "Gearbox", "Fuel_Type"]
+MODEL_CAT_FEATURES = [
+    "Mark", "Model", "Modification", "Gearbox", "Fuel_Type",
+    "Body_Name", "Drive_Name", "Color_Name", "Wheel_Name",
+    "Country_Origin_Id", "ConditionId",
+    "State_Name", "City", "Seller_Type", "Exchange_Type",
+]
+BOOL_FEATURES = [
+    "Is_Crashed", "Custom", "First_Owner", "Is_Leasing",
+    "Has_VIN", "Is_Checked_VIN", "VIN_Has_Restrictions",
+    "Has_Plate", "Is_Checked_Plate", "Is_Dealer", "Phone_Verified",
+    "Exchange_Possible", "Auction_Possible", "Is_Bargain", "Is_Urgent",
+    "With_Video", "Desc_Ideal",
+]
+NUM_OPTIONAL = [
+    "SeatsNumber", "DoorsNumber", "Photos_Count", "Description_Length", "Options_Count",
+]
 
 
 # ─────────────────────────────────────────────
@@ -221,29 +227,57 @@ class CarFeatures(BaseModel):
     Mark: str = Field(..., min_length=1)
     Model: str = Field(..., min_length=1)
     Mileage: float = Field(..., ge=0, le=2_000)
-    Gearbox: str = Field(..., min_length=1)
     Age: int = Field(..., ge=0, le=60)
-    Fuel_Type: str = Field(..., min_length=1)
-    Engine_Capacity: float = Field(..., ge=0, le=20)
-    Km_per_Year: float = Field(..., ge=0)
-    is_EV: int = Field(..., ge=0, le=1)
-    is_suspicious_mileage: int = Field(..., ge=0, le=1)
-    is_new: int = Field(..., ge=0, le=1)
 
-    # ── Нові поля (не йдуть у ML-модель, лише в евристичний шар корективів) ──
+    Gearbox: str | None = Field(default=None)
+    Fuel_Type: str | None = Field(default=None)
+    Engine_Capacity: float | None = Field(default=None, ge=0, le=20)
+    Km_per_Year: float | None = Field(default=None, ge=0)
+    is_EV: int | None = Field(default=None, ge=0, le=1)
+    is_suspicious_mileage: int | None = Field(default=None, ge=0, le=1)
+    is_new: int | None = Field(default=None, ge=0, le=1)
+
+    Modification: str | None = Field(default=None)
     Body_Name: str | None = Field(default=None)
     Drive_Name: str | None = Field(default=None)
     Color_Name: str | None = Field(default=None)
-    Is_Crashed: bool = Field(default=False)
-    Custom: bool = Field(default=True)          # чи розмитнене
-    First_Owner: bool = Field(default=False)
-    Exchange_Possible: bool = Field(default=False)  # інформаційне, на ціну не впливає
-    Is_Bargain: bool = Field(default=False)          # інформаційне, на ціну не впливає
-    Is_Urgent: bool = Field(default=False)           # інформаційне, на ціну не впливає
+    Wheel_Name: str | None = Field(default=None)
+    State_Name: str | None = Field(default=None)
+    City: str | None = Field(default=None)
+    Seller_Type: str | None = Field(default=None)
+    Exchange_Type: str | None = Field(default=None)
+    Country_Origin_Id: str | None = Field(default=None)
+    ConditionId: str | None = Field(default=None)
 
-    @field_validator("Mileage", "Engine_Capacity", "Km_per_Year")
+    SeatsNumber: float | None = Field(default=None)
+    DoorsNumber: float | None = Field(default=None)
+    Photos_Count: float | None = Field(default=None)
+    Description_Length: float | None = Field(default=None)
+    Options_Count: float | None = Field(default=None)
+
+    Is_Crashed: bool | None = Field(default=None)
+    Custom: bool | None = Field(default=None)
+    First_Owner: bool | None = Field(default=None)
+    Is_Leasing: bool | None = Field(default=None)
+    Has_VIN: bool | None = Field(default=None)
+    Is_Checked_VIN: bool | None = Field(default=None)
+    VIN_Has_Restrictions: bool | None = Field(default=None)
+    Has_Plate: bool | None = Field(default=None)
+    Is_Checked_Plate: bool | None = Field(default=None)
+    Is_Dealer: bool | None = Field(default=None)
+    Phone_Verified: bool | None = Field(default=None)
+    Exchange_Possible: bool | None = Field(default=None)
+    Auction_Possible: bool | None = Field(default=None)
+    Is_Bargain: bool | None = Field(default=None)
+    Is_Urgent: bool | None = Field(default=None)
+    With_Video: bool | None = Field(default=None)
+    Desc_Ideal: bool | None = Field(default=None)
+
+    @field_validator("Mileage", "Engine_Capacity", "Km_per_Year", "SeatsNumber", "DoorsNumber")
     @classmethod
-    def must_be_finite(cls, v: float) -> float:
+    def must_be_finite(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
         if not np.isfinite(v):
             raise ValueError("Значення має бути скінченним числом.")
         return v
@@ -269,18 +303,74 @@ def process_prediction(raw_value: float) -> float:
     return round(float(price), 2)
 
 
+def _as_cat(v, *, mark_or_model: bool = False) -> str:
+    if v is None:
+        return UNKNOWN
+    s = str(v).strip()
+    if s in ("", "None", "nan", "NaN", "Unknown"):
+        return UNKNOWN
+    if mark_or_model and s in ("Інша", "Інше", "Інший"):
+        return "Other"
+    return s
+
+
+def _as_num(v, *, zero_as_missing: bool = False):
+    if v is None or v == "":
+        return np.nan
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return np.nan
+    if not np.isfinite(x):
+        return np.nan
+    if zero_as_missing and x <= 0:
+        return np.nan
+    return x
+
+
+def _as_bool01(v):
+    if v is None:
+        return np.nan
+    if isinstance(v, str) and v.strip() in ("", UNKNOWN, "None"):
+        return np.nan
+    return float(int(bool(v)))
+
+
 def engineer_features(car_dict: dict) -> dict:
-    """
-    Додає похідні ознаки, якими навчалась оновлена модель.
-    """
+    """Нормалізує unknown і додає похідні ознаки, як у prepare.py."""
     out = dict(car_dict)
+    out["Mark"] = _as_cat(out.get("Mark"), mark_or_model=True)
+    out["Model"] = _as_cat(out.get("Model"), mark_or_model=True)
+    for col in MODEL_CAT_FEATURES:
+        if col in ("Mark", "Model"):
+            continue
+        out[col] = _as_cat(out.get(col))
+
+    mileage = _as_num(out.get("Mileage"), zero_as_missing=True)
+    age = int(out.get("Age") or 0)
+    engine = _as_num(out.get("Engine_Capacity"))
+    if pd.isna(engine):
+        engine = 0.0
+
+    out["Mileage"] = mileage
+    out["Age"] = age
+    out["Engine_Capacity"] = engine
+    out["is_EV"] = int(out["Fuel_Type"] == "Електро")
+    out["is_suspicious_mileage"] = int(bool(age > 10 and pd.notna(mileage) and mileage < 50))
+    out["is_new"] = int(age <= 3)
+    out["Km_per_Year"] = (mileage / (age + 1)) if pd.notna(mileage) else np.nan
     out["is_luxury_brand"] = int(out["Mark"] in LUXURY_MARKS)
-    out["is_automatic_gearbox"] = 1 if out["Gearbox"] in AUTOMATIC_LIKE else 0
-    out["Engine_missing"] = int(out["Engine_Capacity"] == 0)
-    out["log_Mileage"] = float(np.log1p(out["Mileage"]))
-    out["Age_x_Mileage"] = out["Age"] * out["Mileage"]
-    year = CURRENT_YEAR - out["Age"]
-    out["Decade"] = int(year // 10 * 10)
+    out["is_automatic_gearbox"] = int(out["Gearbox"] in AUTOMATIC_LIKE)
+    out["Engine_missing"] = int(float(engine) == 0)
+    out["log_Mileage"] = float(np.log1p(mileage)) if pd.notna(mileage) else np.nan
+    out["Age_x_Mileage"] = (age * mileage) if pd.notna(mileage) else np.nan
+    out["Decade"] = int((CURRENT_YEAR - age) // 10 * 10)
+
+    for col in BOOL_FEATURES:
+        out[col] = _as_bool01(out.get(col))
+    for col in NUM_OPTIONAL:
+        val = _as_num(out.get(col), zero_as_missing=(col in ("SeatsNumber", "DoorsNumber")))
+        out[col] = val
     return out
 
 
@@ -309,22 +399,48 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
 
         # Переводимо в зручні Ukrainian-назви та залишаємо топ-6 за abs
         label_map = {
-            "Age":                  "Вік авто",
-            "Mileage":              "Пробіг",
-            "Engine_Capacity":      "Об'єм двигуна",
-            "Km_per_Year":          "Км на рік",
-            "Fuel_Type":            "Тип пального",
-            "Gearbox":              "Коробка передач",
-            "Mark":                 "Марка",
-            "Model":                "Модель",
-            "is_EV":                "Електро",
+            "Age": "Вік авто",
+            "Mileage": "Пробіг",
+            "Engine_Capacity": "Об'єм двигуна",
+            "Km_per_Year": "Км на рік",
+            "Fuel_Type": "Тип пального",
+            "Gearbox": "Коробка передач",
+            "Mark": "Марка",
+            "Model": "Модель",
+            "Modification": "Модифікація",
+            "Body_Name": "Кузов",
+            "Drive_Name": "Привід",
+            "Color_Name": "Колір",
+            "Wheel_Name": "Кермо",
+            "SeatsNumber": "К-сть місць",
+            "DoorsNumber": "К-сть дверей",
+            "Is_Crashed": "ДТП",
+            "Custom": "Розмитнення",
+            "First_Owner": "Перший власник",
+            "Is_Leasing": "Лізинг",
+            "Has_VIN": "Є VIN",
+            "Is_Checked_VIN": "VIN перевірено",
+            "VIN_Has_Restrictions": "Обмеження VIN",
+            "State_Name": "Область",
+            "City": "Місто",
+            "Is_Dealer": "Дилер",
+            "Seller_Type": "Тип продавця",
+            "Exchange_Possible": "Обмін",
+            "Is_Bargain": "Торг",
+            "Is_Urgent": "Терміново",
+            "Photos_Count": "К-сть фото",
+            "With_Video": "Є відео",
+            "Description_Length": "Довжина опису",
+            "Options_Count": "К-сть опцій",
+            "Desc_Ideal": "«Ідеальний» в описі",
+            "is_EV": "Електро",
             "is_suspicious_mileage": "Підозр. пробіг",
-            "is_new":               "Нове авто (≤3р)",
-            "is_luxury_brand":      "Преміум-марка",
-            "Engine_missing":       "Об'єм не вказано",
-            "log_Mileage":          "Пробіг (log)",
-            "Age_x_Mileage":        "Вік × Пробіг",
-            "Decade":               "Десятиліття випуску",
+            "is_new": "Нове авто (≤3р)",
+            "is_luxury_brand": "Преміум-марка",
+            "Engine_missing": "Об'єм не вказано",
+            "log_Mileage": "Пробіг (log)",
+            "Age_x_Mileage": "Вік × Пробіг",
+            "Decade": "Десятиліття випуску",
             "is_automatic_gearbox": "Тип КПП (спрощ.)",
         }
         shap_dict = {

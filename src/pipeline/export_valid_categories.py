@@ -6,49 +6,34 @@
 import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-RANDOM_SEED = 42  # noqa: F401 — для узгодженості з prepare.py
-CURRENT_YEAR = 2026
-MIN_COUNT = 10
+from prepare import MIN_COUNT, UNKNOWN, clean_raw_dataframe, resolve_csv_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CSV_PATH = PROJECT_ROOT / "data" / "new_data" / "new_cars_dataset_2.csv"
 OUT_PATH = PROJECT_ROOT / "models_results" / "valid_categories.json"
 
 
-def _clean(df: pd.DataFrame) -> pd.DataFrame:
-    df = df[df["CategoryId"].isin([0, 1])].copy()
-    df["Engine_Volume"] = df["Fuel_Name"].str.extract(r"(\d+\.?\d*)").astype(float)
-    df["Fuel_Type"] = (
-        df["Fuel_Name"]
-        .str.replace(r",?\s*\d+\.?\d*\s*л\.?", "", regex=True)
-        .str.strip()
-    )
-    df["Fuel_Type"] = df["Fuel_Type"].replace("", np.nan)
-    df["Age"] = CURRENT_YEAR - df["Year"]
-    df = df.rename(
-        columns={
-            "Mileage_K": "Mileage",
-            "Gearbox_Name": "Gearbox",
-            "Engine_Volume": "Engine_Capacity",
-        }
-    )
-    df = df[df["Mark"] != "Причеп"].copy()
-    df["Mark"] = df["Mark"].fillna("Other")
-    df["Model"] = df["Model"].fillna("Other")
-    df["Gearbox"] = df["Gearbox"].fillna("Unknown")
-    df["Fuel_Type"] = df["Fuel_Type"].fillna("Не вказано")
-    df["Engine_Capacity"] = df["Engine_Capacity"].fillna(0)
-    return df
+def _uniq_list(series, extra_other: str | None = None) -> list[str]:
+    vals = []
+    for x in series.dropna().unique().tolist():
+        s = str(x).strip()
+        if not s or s in (UNKNOWN, "Unknown", "Other", "nan", "None"):
+            continue
+        if s not in vals:
+            vals.append(s)
+    vals = sorted(vals)
+    out = [UNKNOWN] + vals
+    if extra_other and extra_other not in out:
+        out.append(extra_other)
+    return out
 
 
-def build_categories(df: pd.DataFrame) -> dict:
+def build_categories(df) -> dict:
     mark_counts = df["Mark"].value_counts()
     model_counts = df["Model"].value_counts()
-    valid_marks = mark_counts[mark_counts >= MIN_COUNT].index.tolist()
-    valid_models = model_counts[model_counts >= MIN_COUNT].index.tolist()
+    valid_marks = [m for m in mark_counts[mark_counts >= MIN_COUNT].index.tolist() if m not in (UNKNOWN, "Other")]
+    valid_models = [m for m in model_counts[model_counts >= MIN_COUNT].index.tolist() if m not in (UNKNOWN, "Other")]
 
     mark_model_mapping: dict[str, list[str]] = {}
     engine_mapping: dict[str, dict[str, list[float]]] = {}
@@ -57,7 +42,10 @@ def build_categories(df: pd.DataFrame) -> dict:
 
     for mark in valid_marks:
         sub = df[df["Mark"] == mark]
-        models = sorted(sub["Model"].unique().tolist())
+        models = sorted(
+            m for m in sub["Model"].unique().tolist()
+            if m not in (UNKNOWN, "Other")
+        )
         mark_model_mapping[mark] = models
 
         engine_mapping[mark] = {}
@@ -66,9 +54,13 @@ def build_categories(df: pd.DataFrame) -> dict:
 
         for model in models:
             msub = sub[sub["Model"] == model]
-            caps = sorted({round(float(x), 1) for x in msub["Engine_Capacity"].unique() if x > 0})
-            fuels = sorted(msub["Fuel_Type"].unique().tolist())
-            gearboxes = sorted(msub["Gearbox"].unique().tolist())
+            caps = sorted({
+                round(float(x), 1)
+                for x in msub["Engine_Capacity"].dropna().unique()
+                if float(x) > 0
+            })
+            fuels = _uniq_list(msub["Fuel_Type"])
+            gearboxes = _uniq_list(msub["Gearbox"])
             engine_mapping[mark][model] = caps
             fuel_mapping[mark][model] = fuels
             gearbox_mapping[mark][model] = gearboxes
@@ -80,15 +72,17 @@ def build_categories(df: pd.DataFrame) -> dict:
         "engine_mapping": engine_mapping,
         "fuel_mapping": fuel_mapping,
         "gearbox_mapping": gearbox_mapping,
+        "body_types": _uniq_list(df["Body_Name"], extra_other="Інше"),
+        "drive_types": _uniq_list(df["Drive_Name"]),
+        "color_names": _uniq_list(df["Color_Name"], extra_other="Інший"),
     }
 
 
 def main() -> None:
-    if not CSV_PATH.is_file():
-        raise FileNotFoundError(f"Не знайдено датасет: {CSV_PATH}")
-
-    raw = pd.read_csv(CSV_PATH, low_memory=False)
-    df = _clean(raw)
+    csv_path = resolve_csv_path()
+    print(f"Читаємо {csv_path}")
+    raw = pd.read_csv(csv_path, low_memory=False)
+    df = clean_raw_dataframe(raw)
     payload = build_categories(df)
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w", encoding="utf-8") as f:
