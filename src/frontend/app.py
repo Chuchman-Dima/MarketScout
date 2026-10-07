@@ -127,6 +127,64 @@ def loan_monthly(principal: float, rate_pct: float, months: int) -> float:
     return principal * r * (1 + r) ** months / ((1 + r) ** months - 1)
 
 
+def _select_index(options: list, value, default: int = 0) -> int:
+    try:
+        return options.index(value)
+    except ValueError:
+        return default
+
+
+def preload_from_query_params(
+    valid_marks: list[str],
+    mark_model_map: dict,
+) -> dict | None:
+    """Параметри з URL (?mark=BMW&model=X5&year=2020&mileage=100 …)."""
+    qp = st.query_params
+    mark = qp.get("mark")
+    if not mark:
+        return None
+
+    mark_list = sorted(valid_marks) + ["Інша"]
+    if mark not in mark_list:
+        mark = mark_list[0]
+
+    model = qp.get("model", "")
+    if mark == "Інша":
+        models = ["Інша"]
+    else:
+        models = mark_model_map.get(mark, []) + ["Інша"]
+    if model not in models:
+        model = models[0] if models else "Інша"
+
+    try:
+        year = int(qp.get("year", "2020"))
+    except ValueError:
+        year = 2020
+    try:
+        mileage = int(float(qp.get("mileage", "100")))
+    except ValueError:
+        mileage = 100
+
+    return {
+        "mark": mark,
+        "model": model,
+        "year": year,
+        "mileage": mileage,
+        "gearbox": qp.get("gearbox"),
+        "fuel": qp.get("fuel"),
+        "engine": qp.get("engine"),
+        "body": qp.get("body"),
+        "drive": qp.get("drive"),
+        "color": qp.get("color"),
+        "crashed": qp.get("crashed", "").lower() in ("1", "true", "yes"),
+        "custom": qp.get("custom", "true").lower() not in ("0", "false", "no"),
+        "first_owner": qp.get("first_owner", "").lower() in ("1", "true", "yes"),
+        "exchange": qp.get("exchange", "").lower() in ("1", "true", "yes"),
+        "bargain": qp.get("bargain", "").lower() in ("1", "true", "yes"),
+        "urgent": qp.get("urgent", "").lower() in ("1", "true", "yes"),
+    }
+
+
 def score_ring_svg(sc: int, sc_color: str, sc_label: str) -> str:
     circ = 2 * 3.14159 * 28
     dash = circ * sc / 100
@@ -305,6 +363,12 @@ with col_main:
                     st.session_state.run_batch = False
                     st.rerun()
 
+    if "url_params_applied" not in st.session_state:
+        _from_url = preload_from_query_params(valid_marks, mark_model_map)
+        if _from_url:
+            st.session_state["_preload"] = _from_url
+        st.session_state.url_params_applied = True
+
     preload = st.session_state.pop("_preload", None)
 
     # ── ФОРМА ВВОДУ ──────────────────────────────
@@ -315,15 +379,31 @@ with col_main:
         with col1:
             mark_list = sorted(valid_marks) + ["Інша"]
             mark_default = preload["mark"] if preload and preload["mark"] in mark_list else mark_list[0]
-            mark = st.selectbox("Марка автомобіля", mark_list,
-                                index=mark_list.index(mark_default))
+            mark = st.selectbox(
+                "Марка автомобіля",
+                mark_list,
+                index=_select_index(mark_list, mark_default),
+                key="car_mark",
+            )
 
             available_models = (["Інша"] if mark == "Інша"
-                                else mark_model_map.get(mark, []) + ["Інша"])
-            model_default = (preload["model"] if preload and preload["model"] in available_models
-                             else available_models[0])
-            model_name = st.selectbox("Модель автомобіля", available_models,
-                                      index=available_models.index(model_default))
+                                else sorted(mark_model_map.get(mark, [])) + ["Інша"])
+            if len(available_models) == 1 and mark != "Інша" and not mark_model_map.get(mark):
+                st.caption(
+                    "⚠️ Для цієї марки немає списку моделей на сервері — оберіть «Інша» "
+                    "або оновіть valid_categories.json (export_valid_categories.py)."
+                )
+            model_default = (
+                preload["model"]
+                if preload and preload.get("model") in available_models
+                else available_models[0]
+            )
+            model_name = st.selectbox(
+                "Модель автомобіля",
+                available_models,
+                index=_select_index(available_models, model_default),
+                key=f"car_model_{mark}",
+            )
 
             year = st.number_input("Рік випуску",
                                    min_value=1990, max_value=CURRENT_YEAR, step=1,
@@ -333,23 +413,62 @@ with col_main:
                                       value=int(preload["mileage"]) if preload else 100)
 
         with col2:
-            available_gearboxes = (gearbox_mapping.get(mark, {}).get(model_name, default_gearboxes)
-                                   or default_gearboxes)
-            gearbox = st.selectbox("Коробка передач", available_gearboxes)
+            available_gearboxes = (
+                gearbox_mapping.get(mark, {}).get(model_name, default_gearboxes)
+                or default_gearboxes
+            )
+            gb_default = (
+                preload.get("gearbox")
+                if preload and preload.get("gearbox") in available_gearboxes
+                else available_gearboxes[0]
+            )
+            gearbox = st.selectbox(
+                "Коробка передач",
+                available_gearboxes,
+                index=_select_index(available_gearboxes, gb_default),
+                key=f"car_gearbox_{mark}_{model_name}",
+            )
 
-            available_fuels = (fuel_mapping.get(mark, {}).get(model_name, default_fuels)
-                               or default_fuels)
+            available_fuels = (
+                fuel_mapping.get(mark, {}).get(model_name, default_fuels)
+                or default_fuels
+            )
             available_fuels = ([f for f in available_fuels
                                 if f not in ("Не вказано", "Other", "")] or ["Бензин"])
-            fuel_type = st.selectbox("Тип пального", available_fuels)
+            fuel_default = (
+                preload.get("fuel")
+                if preload and preload.get("fuel") in available_fuels
+                else available_fuels[0]
+            )
+            fuel_type = st.selectbox(
+                "Тип пального",
+                available_fuels,
+                index=_select_index(available_fuels, fuel_default),
+                key=f"car_fuel_{mark}_{model_name}",
+            )
 
             if fuel_type == "Електро":
                 st.text_input("Об'єм двигуна (л)", value="0.0 (Електро)", disabled=True)
                 engine_capacity = 0.0
             else:
-                available_caps = (engine_mapping.get(mark, {}).get(model_name, default_capacities)
-                                  or default_capacities)
-                engine_capacity = st.selectbox("Об'єм двигуна (л)", available_caps)
+                available_caps = (
+                    engine_mapping.get(mark, {}).get(model_name, default_capacities)
+                    or default_capacities
+                )
+                eng_default = preload.get("engine") if preload else None
+                if eng_default is not None:
+                    try:
+                        eng_default = float(eng_default)
+                    except (TypeError, ValueError):
+                        eng_default = None
+                if eng_default not in available_caps:
+                    eng_default = available_caps[0]
+                engine_capacity = st.selectbox(
+                    "Об'єм двигуна (л)",
+                    available_caps,
+                    index=_select_index(available_caps, eng_default),
+                    key=f"car_engine_{mark}_{model_name}",
+                )
 
         st.divider()
 
@@ -358,7 +477,7 @@ with col_main:
             st.info(
                 "💡 Ці поля впливають на ціну через прозорий шар корективів на бекенді "
                 "(ДТП, розмитнення, привід, кузов, перший власник) — не через саму ML-модель. "
-                "Модель CatBoost ще не перенавчена на цих ознаках, тож повний облік (feature importance, "
+                "Модель LightGBM ще не перенавчена на цих ознаках, тож повний облік (feature importance, "
                 "взаємодія з іншими фічами) з'явиться після перенавчання на розширеному датасеті. "
                 "Поля торгу/терміновості/обміну — інформаційні, на ціну не впливають.",
                 icon="ℹ️")
@@ -560,7 +679,7 @@ with col_main:
         if st.session_state.price_adjustments:
             with st.expander("🧮 З чого складається фінальна ціна?"):
                 base_conv = st.session_state.base_ml_price * rates[curr]
-                st.caption(f"Базова оцінка моделі (CatBoost): **{fmt_money(base_conv, curr)}**")
+                st.caption(f"Базова оцінка моделі (LightGBM): **{fmt_money(base_conv, curr)}**")
                 for label, amount_usd in st.session_state.price_adjustments.items():
                     amount_conv = amount_usd * rates[curr]
                     sign = "+" if amount_usd >= 0 else "−"

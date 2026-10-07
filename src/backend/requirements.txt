@@ -1,9 +1,10 @@
+requests
+pandas
+numpy
 fastapi
 uvicorn
-pydantic
-numpy
-pandas
-joblib
-scikit-learn
 lightgbm
+scikit-learn
 shap
+joblib
+pydantic

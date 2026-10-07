@@ -19,8 +19,8 @@ from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error,
 RANDOM_SEED = 42
 CAT_FEATURES = ["Mark", "Model", "Gearbox", "Fuel_Type"]
 
-DATA_DIR = "../../data/parquet"
-RESULTS_PATH = "../../models_results/_results.json"
+DATA_DIR = "../data/parquet"
+RESULTS_PATH = "../data/_results.json"
 
 
 def load_train_test():

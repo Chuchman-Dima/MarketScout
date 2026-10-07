@@ -2,17 +2,41 @@
 Auto Price Predictor — FastAPI Backend
 """
 
+import json
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+import common  # noqa: F401 — CategoricalCaster для joblib.load pipeline
 import joblib
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor, Pool
+import shap
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from sklearn.pipeline import Pipeline
+
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parents[1]
+
+
+def _models_dir() -> Path:
+    env = os.getenv("MODELS_DIR")
+    if env:
+        return Path(env)
+    docker = Path("/app/models_results")
+    if docker.is_dir():
+        return docker
+    return PROJECT_ROOT / "models_results"
+
+
+MODELS_DIR = _models_dir()
+MODEL_PATH = MODELS_DIR / "lightgbm_pipeline.pkl"
+CATEGORIES_PATH = MODELS_DIR / "valid_categories.json"
+CATEGORIES_PKL_PATH = MODELS_DIR / "valid_categories.pkl"
 
 # ─────────────────────────────────────────────
 # ЛОГУВАННЯ
@@ -38,9 +62,9 @@ AUTOMATIC_LIKE = {"Автомат", "Типтронік", "Варіатор", "�
 # ─────────────────────────────────────────────
 # ЕВРИСТИЧНІ КОРЕКТИВИ (нові поля з API.py / app.py)
 # ─────────────────────────────────────────────
-# ВАЖЛИВО: catboost_car_price_model.cbm НЕ навчена на цих ознаках (їх немає
-# в cars_dataset.csv, на якому тренується EDA.ipynb). Тому вони НЕ йдуть
-# у MODEL_FEATURE_ORDER і не передаються в model.predict() — CatBoost вимагає
+# ВАЖЛИВО: lightgbm_pipeline.pkl НЕ навчена на цих ознаках (їх немає
+# в prepare.py, на якому тренується модель). Тому вони НЕ йдуть
+# у MODEL_FEATURE_ORDER і не передаються в model.predict() — пайплайн вимагає
 # точно той самий набір і порядок фіч, що й на тренуванні, інакше впаде.
 #
 # Замість цього застосовуємо їх як прозорий (rule-based) шар поверх ML-ціни:
@@ -66,13 +90,13 @@ ADJ_FULL_DRIVE = 0.04        # повний привід
 ADJ_DEMAND_BODY = 0.03       # затребувані кузови (кросовер/пікап)
 DEMAND_BODY_TYPES = {"Позашляховик / Кросовер", "Пікап"}
 
-# Порядок ознак має ЗБІГАТИСЯ з `features` у EDA.ipynb на момент навчання моделі
+# Порядок ознак має ЗБІГАТИСЯ з `features` у prepare.py на момент навчання моделі
 MODEL_FEATURE_ORDER = [
     "Mark", "Model", "Mileage", "Gearbox", "Age",
     "Fuel_Type", "Engine_Capacity", "Km_per_Year",
     "is_EV", "is_suspicious_mileage", "is_new",
     "is_luxury_brand", "Engine_missing", "log_Mileage", "Age_x_Mileage", "Decade",
-    "Gearbox_simple",
+    "is_automatic_gearbox",
 ]
 MODEL_CAT_FEATURES = ["Mark", "Model", "Gearbox", "Fuel_Type"]
 
@@ -80,37 +104,81 @@ MODEL_CAT_FEATURES = ["Mark", "Model", "Gearbox", "Fuel_Type"]
 # ─────────────────────────────────────────────
 # ЗАВАНТАЖЕННЯ МОДЕЛІ / КАТЕГОРІЙ (один раз)
 # ─────────────────────────────────────────────
-model: CatBoostRegressor | None = None
+model: Pipeline | None = None          # Pipeline(categorize → LGBMRegressor), див. train_lightgbm.py
+explainer: shap.TreeExplainer | None = None  # будується один раз при старті - дорого створювати на кожен запит
 categories: dict = {}
+
+
+def _strip_trailer(categories_data: dict) -> dict:
+    if "valid_marks" in categories_data:
+        categories_data["valid_marks"] = [
+            m for m in categories_data["valid_marks"] if m != "Причеп"
+        ]
+    for key in ("mark_model_mapping", "engine_mapping", "fuel_mapping", "gearbox_mapping"):
+        if key in categories_data:
+            categories_data[key].pop("Причеп", None)
+    return categories_data
+
+
+def load_categories_data() -> dict:
+    """JSON з мапінгами; якщо їх немає — доповнює з legacy valid_categories.pkl."""
+    if CATEGORIES_PATH.is_file():
+        with open(CATEGORIES_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = {}
+
+    if not data.get("mark_model_mapping") and CATEGORIES_PKL_PATH.is_file():
+        log.info("Доповнюємо категорії з valid_categories.pkl…")
+        legacy = joblib.load(CATEGORIES_PKL_PATH)
+        for key in (
+            "valid_marks",
+            "valid_models",
+            "mark_model_mapping",
+            "engine_mapping",
+            "fuel_mapping",
+            "gearbox_mapping",
+        ):
+            data.setdefault(key, legacy.get(key, {} if "mapping" in key else []))
+
+    return _strip_trailer(data)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Завантажує модель та категорії при старті."""
-    global model, categories
+    """Завантажує модель, SHAP-explainer та категорії при старті."""
+    global model, explainer, categories
 
     log.info("Завантаження моделі…")
     try:
-        model = CatBoostRegressor()
-        model.load_model("models_results/catboost_car_price_model.cbm")
-        log.info("Модель завантажена успішно.")
+        model = joblib.load(MODEL_PATH)
+        # TreeExplainer будуємо один раз тут (ініціалізація ~0.3-0.5с) і
+        # перевикористовуємо в кожному /predict - сам прогноз SHAP потім
+        # займає мілісекунди, на відміну від повторної ініціалізації.
+        explainer = shap.TreeExplainer(model.named_steps["model"])
+        log.info("Модель та SHAP-explainer завантажені успішно.")
     except Exception as e:
         log.error(f"Помилка завантаження моделі: {e}")
         model = None
+        explainer = None
 
     log.info("Завантаження категорій…")
     try:
-        categories = joblib.load("models_results/valid_categories.pkl")
-        # Прибираємо «Причеп» зі всіх маппінгів
-        categories.get("valid_marks", [])
-        if "valid_marks" in categories:
-            categories["valid_marks"] = [m for m in categories["valid_marks"] if m != "Причеп"]
-        for key in ("mark_model_mapping", "engine_mapping", "fuel_mapping", "gearbox_mapping"):
-            if key in categories:
-                categories[key].pop("Причеп", None)
-        log.info("Категорії завантажені успішно.")
-    except FileNotFoundError:
-        log.warning("valid_categories.pkl не знайдено — категорії порожні.")
+        categories = load_categories_data()
+        if categories.get("mark_model_mapping"):
+            log.info(
+                "Категорії завантажені (%d марок, мапінг моделей OK).",
+                len(categories.get("valid_marks", [])),
+            )
+        elif categories:
+            log.warning(
+                "Категорії без mark_model_mapping — у UI буде лише «Інша» для моделей. "
+                "Запустіть src/pipeline/export_valid_categories.py"
+            )
+        else:
+            log.warning("Категорії порожні.")
+    except Exception as e:
+        log.error(f"Помилка завантаження категорій: {e}")
         categories = {}
 
     yield  # ← сервер працює тут
@@ -206,10 +274,7 @@ def engineer_features(car_dict: dict) -> dict:
     """
     out = dict(car_dict)
     out["is_luxury_brand"] = int(out["Mark"] in LUXURY_MARKS)
-
-    # ВИПРАВЛЕНО: тепер повертаємо 1 (якщо автомат) або 0 (якщо механіка)
-    out["Gearbox_simple"] = 1 if out["Gearbox"] in AUTOMATIC_LIKE else 0
-
+    out["is_automatic_gearbox"] = 1 if out["Gearbox"] in AUTOMATIC_LIKE else 0
     out["Engine_missing"] = int(out["Engine_Capacity"] == 0)
     out["log_Mileage"] = float(np.log1p(out["Mileage"]))
     out["Age_x_Mileage"] = out["Age"] * out["Mileage"]
@@ -225,22 +290,21 @@ def build_dataframe(car_dict: dict) -> pd.DataFrame:
     df = pd.DataFrame([enriched])
     return df[MODEL_FEATURE_ORDER]
 
+
 def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
     """
-    Обчислює SHAP-подібні внески кожної характеристики.
-    Якщо модель підтримує get_feature_importance(type='ShapValues') — використовуємо її.
-    Інакше — евристична апроксимація.
+    Обчислює SHAP-внески кожної характеристики через shap.TreeExplainer
+    (побудований один раз у lifespan, не на кожен запит).
+    Якщо SHAP з якоїсь причини недоступний — евристична апроксимація.
     """
     try:
         df = build_dataframe(car.model_dump())
-        pool = Pool(df, cat_features=MODEL_CAT_FEATURES)
-        shap_matrix = model.get_feature_importance(
-            data=pool,
-            type="ShapValues",
-        )
-        # shap_matrix: (1, n_features+1) — остання колонка — базове значення
-        shap_row = shap_matrix[0, :-1]
-        feature_names = df.columns.tolist()
+        # categorize-крок переводить Mark/Model/Gearbox/Fuel_Type у pandas
+        # 'category' dtype з тим самим словником категорій, що бачила модель
+        # на тренуванні (CategoricalCaster.transform, див. common.py).
+        X_transformed = model.named_steps["categorize"].transform(df)
+        shap_row = explainer.shap_values(X_transformed)[0]
+        feature_names = X_transformed.columns.tolist()
 
         # Переводимо в зручні Ukrainian-назви та залишаємо топ-6 за abs
         label_map = {
@@ -260,7 +324,7 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
             "log_Mileage":          "Пробіг (log)",
             "Age_x_Mileage":        "Вік × Пробіг",
             "Decade":               "Десятиліття випуску",
-            "Gearbox_simple":       "Тип КПП (спрощ.)",
+            "is_automatic_gearbox": "Тип КПП (спрощ.)",
         }
         shap_dict = {
             label_map.get(f, f): round(float(v) * predicted_price, 1)
