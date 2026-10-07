@@ -20,8 +20,6 @@ from pydantic import BaseModel, Field, field_validator
 from sklearn.pipeline import Pipeline
 
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parents[1]
-
 
 def _models_dir() -> Path:
     env = os.getenv("MODELS_DIR")
@@ -30,7 +28,10 @@ def _models_dir() -> Path:
     docker = Path("/app/models_results")
     if docker.is_dir():
         return docker
-    return PROJECT_ROOT / "models_results"
+    # Якщо локально в src/backend, беремо батьківську директорію проєкту на 2 рівні вище
+    if len(BASE_DIR.parents) > 1:
+        return BASE_DIR.parents[1] / "models_results"
+    return BASE_DIR / "models_results"
 
 
 MODELS_DIR = _models_dir()
