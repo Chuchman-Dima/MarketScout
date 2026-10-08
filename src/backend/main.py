@@ -199,7 +199,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Auto Price Predictor API",
     version="2.1.0",
-    description="ML-бекенд для прогнозу ринкової ціни автомобілів",
+    description="ML-бекенд для прогнозу ринкової ціни автомобілів. Усі ознаки йдуть у модель, без евристичних коефіцієнтів.",
     lifespan=lifespan,
 )
 
@@ -456,11 +456,16 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
     except Exception:
         # Евристична апроксимація (якщо SHAP не підтримується)
         base = predicted_price
-        age_effect  = -base * 0.04 * car.Age if car.Age > 3 else base * 0.03
-        mile_effect = -base * 0.003 * car.Mileage if car.Mileage > 100 else base * 0.015 * (100 - car.Mileage) / 100
+        age_effect = -base * 0.04 * car.Age if car.Age > 3 else base * 0.03
+        mile_effect = (
+            -base * 0.003 * car.Mileage
+            if car.Mileage > 100
+            else base * 0.015 * (100 - car.Mileage) / 100
+        )
         fuel_effect = base * 0.03 if car.Fuel_Type in ("Дизель", "Гібрид (HEV)") else -base * 0.01
         gear_effect = base * 0.02 if car.Gearbox == "Автомат" else -base * 0.01
-        eng_effect  = base * 0.01 * (car.Engine_Capacity - 1.6) if car.Engine_Capacity > 0 else 0
+        eng = car.Engine_Capacity or 0
+        eng_effect = base * 0.01 * (eng - 1.6) if eng > 0 else 0
         luxury_effect = base * 0.08 if car.Mark in LUXURY_MARKS else 0.0
         return {
             "Вік авто":       round(age_effect, 1),
@@ -470,30 +475,6 @@ def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
             "Об'єм двигуна":  round(eng_effect, 1),
             "Преміум-марка":  round(luxury_effect, 1),
         }
-
-
-def apply_heuristic_adjustments(car: CarFeatures, base_price: float) -> tuple[float, dict]:
-    """
-    Застосовує rule-based корективи поверх ML-ціни для ознак, яких ще немає
-    в тренувальних даних моделі (див. коментар біля ADJ_* констант вище).
-    Повертає (фінальна_ціна, {назва_коректива: сума_у_$}).
-    """
-    adjustments: dict[str, float] = {}
-
-    if car.Is_Crashed:
-        adjustments["Після ДТП"] = round(base_price * ADJ_CRASHED, 1)
-    if not car.Custom:
-        adjustments["Нерозмитнене"] = round(base_price * ADJ_NOT_CUSTOMS, 1)
-    if car.First_Owner:
-        adjustments["Перший власник"] = round(base_price * ADJ_FIRST_OWNER, 1)
-    if car.Drive_Name == "Повний":
-        adjustments["Повний привід"] = round(base_price * ADJ_FULL_DRIVE, 1)
-    if car.Body_Name in DEMAND_BODY_TYPES:
-        adjustments["Затребуваний кузов"] = round(base_price * ADJ_DEMAND_BODY, 1)
-
-    final_price = base_price + sum(adjustments.values())
-    final_price = max(round(final_price, 2), 0.0)
-    return final_price, adjustments
 
 
 def _model_ready() -> None:
@@ -521,13 +502,11 @@ def get_categories():
     """Повертає всі допустимі значення для форми вводу."""
     if not categories:
         raise HTTPException(status_code=404, detail="Категорії не знайдені.")
-    # Довідники для нових (не-ML) полів — тримаємо в бекенді, щоб UI
-    # не хардкодив списки окремо від логіки корективів.
     return {
         **categories,
-        "body_types":  BODY_TYPES,
-        "drive_types": DRIVE_TYPES,
-        "color_names": COLOR_NAMES,
+        "body_types": categories.get("body_types") or BODY_TYPES,
+        "drive_types": categories.get("drive_types") or DRIVE_TYPES,
+        "color_names": categories.get("color_names") or COLOR_NAMES,
     }
 
 
@@ -548,18 +527,14 @@ def predict_price(car: CarFeatures):
             raise HTTPException(status_code=422, detail="Не вдалося обчислити ціну для цих параметрів.")
 
         shap_values = compute_shap(car, base_price)
-        final_price, adjustments = apply_heuristic_adjustments(car, base_price)
 
         log.info(
-            f"Predict: {car.Mark} {car.Model} {car.Age}р {car.Mileage}тис → "
-            f"ML=${base_price:,.0f} корективи={adjustments} → ${final_price:,.0f}"
+            f"Predict: {car.Mark} {car.Model} {car.Age}р {car.Mileage}тис → ${base_price:,.0f}"
         )
 
         return {
-            "predicted_price_usd": final_price,   # фінальна ціна (ML + корективи)
-            "base_ml_price_usd":   base_price,     # чиста ML-ціна без корективів
-            "shap_values":         shap_values,
-            "price_adjustments":   adjustments,    # rule-based корективи, $ (не з моделі)
+            "predicted_price_usd": base_price,
+            "shap_values": shap_values,
         }
 
     except HTTPException:
@@ -587,14 +562,13 @@ def predict_depreciation(req: DepreciationRequest):
             current["Mileage"]  += req.annual_mileage * year_offset
             current["Km_per_Year"] = current["Mileage"] / (current["Age"] + 1)
             current["is_new"]   = int(current["Age"] <= 3)
-            current["is_suspicious_mileage"] = int(current["Age"] > 10 and current["Mileage"] < 50)
+            current["is_suspicious_mileage"] = int(
+                current["Age"] > 10 and current["Mileage"] is not None and current["Mileage"] < 50
+            )
 
-            df  = build_dataframe(current)
+            df = build_dataframe(current)
             raw = model.predict(df)[0]
             price = process_prediction(raw)
-            # Ознаки на кшталт ДТП/розмитнення не змінюються з роками, тому
-            # застосовуємо ті самі корективи, що й для req.car, до кожного року.
-            price, _ = apply_heuristic_adjustments(req.car, price)
 
             # Ціна не може рости з часом
             if predictions and price > predictions[-1]["Price"]:
@@ -629,15 +603,13 @@ def predict_batch(cars: list[CarFeatures]):
     results = []
     for car in cars:
         try:
-            df    = build_dataframe(car.model_dump())
-            raw   = model.predict(df)[0]
+            df = build_dataframe(car.model_dump())
+            raw = model.predict(df)[0]
             price = process_prediction(raw)
-            price, adjustments = apply_heuristic_adjustments(car, price)
             results.append({
-                "mark":  car.Mark,
+                "mark": car.Mark,
                 "model": car.Model,
                 "predicted_price_usd": price,
-                "price_adjustments":   adjustments,
             })
         except Exception as e:
             results.append({
