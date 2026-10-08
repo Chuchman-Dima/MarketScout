@@ -13,12 +13,14 @@ cross-validation.py (_cv_results.json), і показує одну зведен�
 """
 
 import json
+from pathlib import Path
 
 import pandas as pd
 
-RESULTS_PATH = "../../models_results/_results.json"
-CV_RESULTS_PATH = "../../data/_cv_results.json"
-LOG_PATH = "../../models_results/results_log.csv"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RESULTS_PATH = PROJECT_ROOT / "data" / "_results.json"
+CV_RESULTS_PATH = PROJECT_ROOT / "data" / "_cv_results.json"
+LOG_PATH = PROJECT_ROOT / "models_results" / "results_log.csv"
 
 
 def main():
@@ -51,8 +53,10 @@ def main():
     print("=" * 72)
 
     winner = combined.iloc[0]
-    print(f"\nПереможець за MAE: {winner['model']} "
-          f"(MAE={winner['MAE']}, MAPE={winner['MAPE']}%, R²={winner['R2']})")
+    print(
+        f"\nПереможець за MAE: {winner['model']} "
+        f"(MAE={winner['MAE']}, MAPE={winner['MAPE']}%, R2={winner['R2']})"
+    )
 
     if "CV_MAE_std" in combined.columns and pd.notna(winner.get("CV_MAE_std")):
         max_std = combined["CV_MAE_std"].max()

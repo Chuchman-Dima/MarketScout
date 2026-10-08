@@ -15,7 +15,7 @@ import numpy as np
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import KFold
 
-from common import RANDOM_SEED, load_train_test
+from common import PROJECT_ROOT, RANDOM_SEED, load_train_test
 from train_catboost import build_pipeline as build_catboost
 from train_lightgbm import build_pipeline as build_lightgbm
 from train_xgboost import build_pipeline as build_xgboost
@@ -48,8 +48,10 @@ def main():
         cv_results[name] = {"mean": round(float(np.mean(fold_mae)), 1), "std": round(float(np.std(fold_mae)), 1)}
         print(f"{name}: CV MAE = {cv_results[name]['mean']} ± {cv_results[name]['std']}")
 
-    with open("../data/_cv_results.json", "w", encoding="utf-8") as f:
+    cv_path = PROJECT_ROOT / "data" / "_cv_results.json"
+    with open(cv_path, "w", encoding="utf-8") as f:
         json.dump(cv_results, f)
+    print(f"Збережено {cv_path}")
 
 
 if __name__ == "__main__":
