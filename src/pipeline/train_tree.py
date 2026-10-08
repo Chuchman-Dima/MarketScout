@@ -1,16 +1,18 @@
+import joblib
 import numpy as np
 from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.tree import DecisionTreeRegressor
 
-from common import CAT_FEATURES, RANDOM_SEED, evaluate, load_train_test, save_result
+from common import CAT_FEATURES, PROJECT_ROOT, RANDOM_SEED, evaluate, load_train_test, save_result
 
 
 def build_pipeline() -> Pipeline:
     preprocessor = ColumnTransformer([
         ("cat", OneHotEncoder(handle_unknown="ignore"), CAT_FEATURES),
-    ], remainder="passthrough")
+    ], remainder=SimpleImputer(strategy="median", keep_empty_features=True))
 
     return Pipeline([
         ("prep", preprocessor),
@@ -28,6 +30,11 @@ def main():
     pred_log = pipe.predict(X_test)
     metrics = evaluate(y_test_raw, pred_log)
     save_result("DecisionTree", metrics)
+
+    out = PROJECT_ROOT / "models_results" / "decision_tree_pipeline.pkl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(pipe, out)
+    print(f"Збережено модель: {out}")
 
 
 if __name__ == "__main__":
