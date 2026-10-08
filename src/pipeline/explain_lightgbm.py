@@ -6,7 +6,7 @@ import shap
 import numpy as np
 import matplotlib.pyplot as plt
 
-from common import load_train_test
+from common import PROJECT_ROOT, load_train_test
 from train_lightgbm import build_pipeline
 
 
@@ -35,14 +35,16 @@ def main():
     plt.figure(figsize=(10, 8))
     shap.plots.beeswarm(shap_values, max_display=15, show=False)
     plt.tight_layout()
-    plt.savefig("../../models_results/shap_beeswarm_lightgbm.png", dpi=300)
+    out_dir = PROJECT_ROOT / "models_results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_dir / "shap_beeswarm_lightgbm.png", dpi=300)
     plt.close()
 
     # Bar plot (середня абсолютна важливість фічей)
     plt.figure(figsize=(10, 8))
     shap.plots.bar(shap_values, max_display=15, show=False)
     plt.tight_layout()
-    plt.savefig("../../models_results/shap_bar_lightgbm.png", dpi=300)
+    plt.savefig(out_dir / "shap_bar_lightgbm.png", dpi=300)
     plt.close()
 
     print("Графіки збережено у папку models_results: shap_beeswarm_lightgbm.png, shap_bar_lightgbm.png")
