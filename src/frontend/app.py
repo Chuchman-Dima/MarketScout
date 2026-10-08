@@ -9,64 +9,106 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ─────────────────────────────────────────────
-# НАЛАШТУВАННЯ СТОРІНКИ
-# ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Прогноз ціни авто",
-    page_icon="🚗",
+    page_title="AUREA · оцінка авто",
+    page_icon="◆",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080")
 CURRENT_YEAR = datetime.now().year
+UNKNOWN = "Не вказано"
+TRI = [UNKNOWN, "Ні", "Так"]
 
-# ─────────────────────────────────────────────
-# ГЛОБАЛЬНІ СТИЛІ
-# ─────────────────────────────────────────────
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Manrope:wght@400;500;600;700&display=swap');
+
     :root {
-        --primary:    #1E88E5;
-        --primary-dk: #1565C0;
-        --success:    #43A047;
-        --warning:    #FB8C00;
-        --danger:     #E53935;
-        --bg-card:    rgba(255,255,255,0.03);
-        --radius:     12px;
+        --ink: #0c0d10;
+        --panel: #14161c;
+        --line: rgba(232, 197, 132, 0.18);
+        --gold: #e8c584;
+        --gold-2: #c9a15b;
+        --mist: #b8b4ab;
+        --ok: #7dcea0;
+        --warn: #e8b86d;
+        --bad: #e07a6a;
+    }
+
+    html, body, [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(1200px 600px at 8% -10%, rgba(232,197,132,.08), transparent 50%),
+            radial-gradient(900px 500px at 100% 0%, rgba(90,70,40,.18), transparent 45%),
+            var(--ink) !important;
+        color: #efece6;
+        font-family: 'Manrope', sans-serif;
+    }
+    [data-testid="stHeader"] { background: transparent; }
+    footer { visibility: hidden; }
+    .block-container { padding-top: 1.4rem; max-width: 1180px; }
+
+    h1, h2, h3, .hero-title { font-family: 'Cormorant Garamond', serif; }
+
+    .hero-kicker {
+        letter-spacing: .28em; text-transform: uppercase; font-size: .72rem;
+        color: var(--gold-2); text-align: center; margin-bottom: .2rem;
     }
     .hero-title {
-        text-align: center; font-size: 2.4rem; font-weight: 800;
-        letter-spacing: -0.5px; color: #1E88E5; margin-bottom: 0;
+        text-align: center; font-size: 3.1rem; font-weight: 600;
+        color: #f4efe6; letter-spacing: -0.03em; line-height: 1.05; margin: 0;
     }
     .hero-sub {
-        text-align: center; font-size: 1.05rem; color: #888; margin-top: 4px;
+        text-align: center; color: var(--mist); font-size: 1.02rem;
+        margin: .45rem 0 1.6rem;
     }
-    .score-wrap {
-        display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px;
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+        border: 1px solid var(--line) !important;
+        border-radius: 18px !important;
     }
-    .score-label { font-size: 0.8rem; color: #888; }
+
+    .stSelectbox label, .stNumberInput label, .stRadio label, .stSlider label,
+    .stTextInput label, .stCheckbox label {
+        font-size: .82rem !important; color: #d9d3c7 !important; font-weight: 600 !important;
+    }
+
     div[data-testid="stButton"] > button[kind="primary"] {
-        border-radius: 8px; font-weight: 700; letter-spacing: 0.3px;
-        padding: 0.6rem 1.2rem; transition: all .2s;
+        background: linear-gradient(90deg, #d4af67, #e8c584);
+        color: #1a140c; border: 0; border-radius: 999px;
+        font-weight: 700; letter-spacing: .04em; padding: .7rem 1.4rem;
     }
-    div[data-testid="stButton"] > button[kind="primary"]:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 14px rgba(30,136,229,.35);
+    div[data-testid="stButton"] > button[kind="secondary"] {
+        background: transparent; color: var(--gold);
+        border: 1px solid var(--line); border-radius: 999px;
     }
-    footer { visibility: hidden; }
+
+    .price-hero {
+        text-align: center; padding: 1.2rem 0 .4rem;
+    }
+    .price-hero .amt {
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 3.4rem; font-weight: 600; color: var(--gold);
+        line-height: 1;
+    }
+    .price-hero .hint { color: var(--mist); margin-top: .35rem; font-size: .9rem; }
+
+    .score-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; }
+    .score-label { font-size: 0.78rem; color: var(--mist); }
+
+    .status-bar {
+        display: flex; align-items: center; gap: 14px; margin-top: 10px;
+        padding: 12px 16px; border-radius: 14px;
+        background: rgba(232,197,132,.06); border: 1px solid var(--line);
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# ІНІЦІАЛІЗАЦІЯ СТАНУ
-# ─────────────────────────────────────────────
 _defaults = {
     "prediction_done": False,
     "pred_price": 0.0,
-    "base_ml_price": 0.0,
-    "price_adjustments": {},
     "payload": {},
     "compare_list": [],
     "shap_data": {},
@@ -79,14 +121,11 @@ for k, v in _defaults.items():
         st.session_state[k] = v
 
 
-# ─────────────────────────────────────────────
-# ДОПОМІЖНІ ФУНКЦІЇ
-# ─────────────────────────────────────────────
 def fmt_money(amount: float, currency: str) -> str:
     return f"{int(amount):,} {currency}".replace(",", "\u202f")
 
 
-def condition_score(age: int, mileage: float, fuel_type: str, gearbox: str) -> tuple[int, str, str]:
+def condition_score(age: int, mileage: float, fuel_type: str, gearbox: str, crashed) -> tuple[int, str, str]:
     score = 100
     if age <= 2:
         score -= 0
@@ -110,14 +149,23 @@ def condition_score(age: int, mileage: float, fuel_type: str, gearbox: str) -> t
     else:
         score -= 40
 
-    if fuel_type in ("Електро", "Гібрид (HEV)"): score += 4
-    if gearbox == "Автомат":                      score += 2
+    if fuel_type in ("Електро", "Гібрид (HEV)"):
+        score += 4
+    if gearbox == "Автомат":
+        score += 2
+    if crashed is True:
+        score = max(0, score - 30)
     score = max(0, min(100, score))
 
-    if score >= 80: return score, "#43A047", "Відмінний"
-    if score >= 60: return score, "#FB8C00", "Хороший"
-    if score >= 40: return score, "#FF7043", "Задовільний"
-    return score, "#E53935", "Поганий"
+    if crashed is True:
+        return score, "#e07a6a", "Після ДТП"
+    if score >= 80:
+        return score, "#7dcea0", "Відмінний"
+    if score >= 60:
+        return score, "#e8b86d", "Хороший"
+    if score >= 40:
+        return score, "#e0a070", "Задовільний"
+    return score, "#e07a6a", "Слабкий"
 
 
 def loan_monthly(principal: float, rate_pct: float, months: int) -> float:
@@ -134,27 +182,50 @@ def _select_index(options: list, value, default: int = 0) -> int:
         return default
 
 
-def preload_from_query_params(
-    valid_marks: list[str],
-    mark_model_map: dict,
-) -> dict | None:
-    """Параметри з URL (?mark=BMW&model=X5&year=2020&mileage=100 …)."""
+def _with_unknown(values: list, extra: str | None = None) -> list:
+    seen = []
+    for x in values or []:
+        s = str(x).strip()
+        if not s or s in seen or s in (UNKNOWN, "Other", "Unknown"):
+            continue
+        seen.append(s)
+    out = [UNKNOWN] + seen
+    if extra and extra not in out:
+        out.append(extra)
+    return out
+
+
+def tri_to_bool(value: str):
+    if value == UNKNOWN:
+        return None
+    return value == "Так"
+
+
+def ui_to_mark(mark: str) -> str:
+    if mark in (UNKNOWN, ""):
+        return UNKNOWN
+    if mark in ("Інша", "Інше"):
+        return "Other"
+    return mark
+
+
+def preload_from_query_params(valid_marks: list[str], mark_model_map: dict) -> dict | None:
     qp = st.query_params
     mark = qp.get("mark")
     if not mark:
         return None
 
-    mark_list = sorted(valid_marks) + ["Інша"]
+    mark_list = _with_unknown(sorted(valid_marks), extra="Інша")
     if mark not in mark_list:
-        mark = mark_list[0]
+        mark = UNKNOWN
 
-    model = qp.get("model", "")
-    if mark == "Інша":
-        models = ["Інша"]
+    model = qp.get("model", UNKNOWN)
+    if mark in (UNKNOWN, "Інша"):
+        models = [UNKNOWN, "Інша"]
     else:
-        models = mark_model_map.get(mark, []) + ["Інша"]
+        models = _with_unknown(mark_model_map.get(mark, []), extra="Інша")
     if model not in models:
-        model = models[0] if models else "Інша"
+        model = UNKNOWN
 
     try:
         year = int(qp.get("year", "2020"))
@@ -170,18 +241,18 @@ def preload_from_query_params(
         "model": model,
         "year": year,
         "mileage": mileage,
-        "gearbox": qp.get("gearbox"),
-        "fuel": qp.get("fuel"),
+        "gearbox": qp.get("gearbox", UNKNOWN),
+        "fuel": qp.get("fuel", UNKNOWN),
         "engine": qp.get("engine"),
-        "body": qp.get("body"),
-        "drive": qp.get("drive"),
-        "color": qp.get("color"),
-        "crashed": qp.get("crashed", "").lower() in ("1", "true", "yes"),
-        "custom": qp.get("custom", "true").lower() not in ("0", "false", "no"),
-        "first_owner": qp.get("first_owner", "").lower() in ("1", "true", "yes"),
-        "exchange": qp.get("exchange", "").lower() in ("1", "true", "yes"),
-        "bargain": qp.get("bargain", "").lower() in ("1", "true", "yes"),
-        "urgent": qp.get("urgent", "").lower() in ("1", "true", "yes"),
+        "body": qp.get("body", UNKNOWN),
+        "drive": qp.get("drive", UNKNOWN),
+        "color": qp.get("color", UNKNOWN),
+        "crashed": qp.get("crashed", UNKNOWN),
+        "custom": qp.get("custom", UNKNOWN),
+        "first_owner": qp.get("first_owner", UNKNOWN),
+        "exchange": qp.get("exchange", UNKNOWN),
+        "bargain": qp.get("bargain", UNKNOWN),
+        "urgent": qp.get("urgent", UNKNOWN),
     }
 
 
@@ -190,7 +261,7 @@ def score_ring_svg(sc: int, sc_color: str, sc_label: str) -> str:
     dash = circ * sc / 100
     return f"""<div class='score-wrap'>
         <svg width='70' height='70' viewBox='0 0 70 70'>
-          <circle cx='35' cy='35' r='28' fill='none' stroke='#eee' stroke-width='8'/>
+          <circle cx='35' cy='35' r='28' fill='none' stroke='#2a2c33' stroke-width='8'/>
           <circle cx='35' cy='35' r='28' fill='none' stroke='{sc_color}' stroke-width='8'
             stroke-dasharray='{dash:.1f} {circ:.1f}' stroke-linecap='round'
             transform='rotate(-90 35 35)'/>
@@ -201,9 +272,39 @@ def score_ring_svg(sc: int, sc_color: str, sc_label: str) -> str:
     </div>"""
 
 
-# ─────────────────────────────────────────────
-# ЗАПИТИ ДО БЕКЕНДУ
-# ─────────────────────────────────────────────
+def build_payload(saved: dict) -> dict:
+    age = CURRENT_YEAR - int(saved["year"])
+    mileage = float(saved["mileage"])
+    fuel = saved.get("fuel") or UNKNOWN
+    engine = saved.get("engine")
+    if engine in (None, UNKNOWN, ""):
+        engine_val = 0.0 if fuel == "Електро" else 0.0
+    else:
+        engine_val = float(engine)
+    return {
+        "Mark": ui_to_mark(saved["mark"]),
+        "Model": ui_to_mark(saved["model"]),
+        "Mileage": mileage,
+        "Gearbox": None if saved.get("gearbox") in (None, UNKNOWN) else saved.get("gearbox"),
+        "Age": int(age),
+        "Fuel_Type": None if fuel in (None, UNKNOWN) else fuel,
+        "Engine_Capacity": float(engine_val),
+        "Km_per_Year": mileage / (age + 1),
+        "is_EV": 1 if fuel == "Електро" else 0,
+        "is_suspicious_mileage": 1 if (age > 10 and mileage < 50) else 0,
+        "is_new": 1 if age <= 3 else 0,
+        "Body_Name": None if saved.get("body") in (None, UNKNOWN) else saved.get("body"),
+        "Drive_Name": None if saved.get("drive") in (None, UNKNOWN) else saved.get("drive"),
+        "Color_Name": None if saved.get("color") in (None, UNKNOWN) else saved.get("color"),
+        "Is_Crashed": tri_to_bool(saved.get("crashed", UNKNOWN)),
+        "Custom": tri_to_bool(saved.get("custom", UNKNOWN)),
+        "First_Owner": tri_to_bool(saved.get("first_owner", UNKNOWN)),
+        "Exchange_Possible": tri_to_bool(saved.get("exchange", UNKNOWN)),
+        "Is_Bargain": tri_to_bool(saved.get("bargain", UNKNOWN)),
+        "Is_Urgent": tri_to_bool(saved.get("urgent", UNKNOWN)),
+    }
+
+
 @st.cache_data(show_spinner=False)
 def load_categories() -> dict | None:
     for attempt in range(3):
@@ -234,111 +335,68 @@ def get_exchange_rates() -> dict:
     return default
 
 
-# ─────────────────────────────────────────────
-# ГОЛОВНИЙ LAYOUT
-# ─────────────────────────────────────────────
-spacer_left, col_main, spacer_right = st.columns([1, 8, 1])
+if "categories_loaded" not in st.session_state:
+    _status_placeholder = st.empty()
+    with _status_placeholder.status("З'єднання з сервером…", expanded=True) as _status:
+        _cats = load_categories()
+        if _cats:
+            st.session_state.valid_categories = _cats
+            st.session_state.categories_loaded = True
+            _status.update(label="Готово", state="complete", expanded=False)
+        else:
+            _status.update(label="Немає зв'язку", state="error")
+            st.error(f"Бекенд не відповідає.\n\nURL: `{BACKEND_URL}`")
+            st.stop()
+    valid_categories = st.session_state.valid_categories
+else:
+    valid_categories = st.session_state.valid_categories
 
-with col_main:
-    # ── Підключення до бекенду ──────────────────
-    if "categories_loaded" not in st.session_state:
-        _status_placeholder = st.empty()
-        with _status_placeholder.status(
-                "🔄 З'єднання з сервером… (до 2 хвилин)", expanded=True
-        ) as _status:
-            _cats = load_categories()
-            if _cats:
-                st.session_state.valid_categories = _cats
-                st.session_state.categories_loaded = True
-                _status.update(label="✅ З'єднання встановлено!", state="complete", expanded=False)
-            else:
-                _status.update(label="❌ Помилка підключення", state="error")
-                st.error(
-                    f"Бекенд не відповідає. Спробуйте оновити сторінку.\n\n"
-                    f"URL бекенду: `{BACKEND_URL}`"
-                )
-                st.stop()
-        valid_categories = st.session_state.valid_categories
-    else:
-        valid_categories = st.session_state.valid_categories
+valid_marks = [m for m in valid_categories.get("valid_marks", []) if m != "Причеп"]
+mark_model_map = valid_categories.get("mark_model_mapping", {})
+engine_mapping = valid_categories.get("engine_mapping", {})
+fuel_mapping = valid_categories.get("fuel_mapping", {})
+gearbox_mapping = valid_categories.get("gearbox_mapping", {})
+body_types = valid_categories.get("body_types", [])
+drive_types = valid_categories.get("drive_types", [])
+color_names = valid_categories.get("color_names", [])
 
-    # ── Розпаковка категорій ─────────────────────
-    valid_marks = [m for m in valid_categories.get("valid_marks", []) if m != "Причеп"]
-    mark_model_map = valid_categories.get("mark_model_mapping", {})
-    engine_mapping = valid_categories.get("engine_mapping", {})
-    fuel_mapping = valid_categories.get("fuel_mapping", {})
-    gearbox_mapping = valid_categories.get("gearbox_mapping", {})
-    body_types = valid_categories.get("body_types", ["Седан", "Позашляховик / Кросовер", "Хетчбек", "Універсал", "Мінівен", "Купе", "Пікап", "Інше"])
-    drive_types = valid_categories.get("drive_types", ["Передній", "Задній", "Повний", "Не вказано"])
-    color_names = valid_categories.get("color_names", ["Чорний", "Білий", "Сірий", "Сріблястий", "Синій", "Червоний", "Зелений", "Інший"])
+default_fuels = ["Бензин", "Дизель", "Електро", "Газ", "Гібрид (HEV)"]
+default_capacities = np.arange(1.0, 8.2, 0.2).round(1).tolist()
+default_gearboxes = ["Автомат", "Ручна / Механіка", "Робот", "Варіатор", "Тіптронік", "Редуктор"]
 
-    default_fuels = ["Бензин", "Дизель", "Електро", "Газ", "Гібрид (HEV)"]
-    default_capacities = np.arange(1.0, 8.2, 0.2).round(1).tolist()
-    default_gearboxes = ["Автомат", "Ручна / Механіка", "Робот", "Варіатор", "Тіптронік", "Редуктор"]
+st.markdown("<p class='hero-kicker'>Market intelligence</p>", unsafe_allow_html=True)
+st.markdown("<h1 class='hero-title'>AUREA</h1>", unsafe_allow_html=True)
+st.markdown(
+    "<p class='hero-sub'>Ринкова оцінка авто за повним набором ознак — без ручних коефіцієнтів.</p>",
+    unsafe_allow_html=True,
+)
 
-    # ── ЗАГОЛОВОК ────────────────────────────────
-    st.markdown("<h1 class='hero-title'>🚗 Калькулятор вартості авто</h1>", unsafe_allow_html=True)
-    st.markdown(
-        "<p class='hero-sub'>Штучний інтелект для визначення справедливої ринкової ціни</p>",
-        unsafe_allow_html=True,
-    )
-    st.write("")
+if st.session_state.saved_cars:
+    with st.expander("Збережені авто / пакетна оцінка"):
+        saved_labels = [f"{c['mark']} {c['model']} ({c['year']})" for c in st.session_state.saved_cars]
+        col_sel, col_del = st.columns([3, 1])
+        with col_sel:
+            chosen = st.selectbox("Оберіть авто", saved_labels, key="saved_selector")
+        with col_del:
+            st.write("")
+            if st.button("Видалити", key="del_saved", type="secondary"):
+                idx = saved_labels.index(chosen)
+                st.session_state.saved_cars.pop(idx)
+                st.rerun()
 
-    # ── Завантаження збереженого авто та Batch Оцінка ───────────
-    if st.session_state.saved_cars:
-        with st.expander("📂 Завантажити збережене авто / Пакетна оцінка"):
-            saved_labels = [f"{c['mark']} {c['model']} ({c['year']})" for c in st.session_state.saved_cars]
-            col_sel, col_del = st.columns([3, 1])
-            with col_sel:
-                chosen = st.selectbox("Оберіть авто:", saved_labels, key="saved_selector")
-            with col_del:
-                st.write("")
-                if st.button("🗑 Видалити", key="del_saved", type="secondary"):
-                    idx = saved_labels.index(chosen)
-                    st.session_state.saved_cars.pop(idx)
-                    st.rerun()
+        col_load, col_batch = st.columns(2)
+        with col_load:
+            if st.button("Підставити параметри", key="load_saved"):
+                idx = saved_labels.index(chosen)
+                st.session_state["_preload"] = st.session_state.saved_cars[idx]
+                st.rerun()
+        with col_batch:
+            if st.button("Оцінити всі", key="batch_eval"):
+                st.session_state.run_batch = True
 
-            col_load, col_batch = st.columns(2)
-            with col_load:
-                if st.button("⬇️ Завантажити параметри", key="load_saved"):
-                    idx = saved_labels.index(chosen)
-                    st.session_state["_preload"] = st.session_state.saved_cars[idx]
-                    st.rerun()
-            with col_batch:
-                if st.button("📊 Оцінити всі збережені (Пакетно)", key="batch_eval"):
-                    st.session_state.run_batch = True
-
-        # Обробка пакетної оцінки
         if st.session_state.get("run_batch"):
-            with st.spinner("Пакетна оцінка збережених авто..."):
-                payloads = []
-                for c in st.session_state.saved_cars:
-                    age = CURRENT_YEAR - c["year"]
-                    km_per_year = c["mileage"] / (age + 1)
-                    payloads.append({
-                        "Mark": "Other" if c["mark"] == "Інша" else c["mark"],
-                        "Model": "Other" if c["model"] == "Інша" else c["model"],
-                        "Mileage": float(c["mileage"]),
-                        "Gearbox": c["gearbox"],
-                        "Age": int(age),
-                        "Fuel_Type": c["fuel"],
-                        "Engine_Capacity": float(c["engine"]),
-                        "Km_per_Year": float(km_per_year),
-                        "is_EV": 1 if c["fuel"] == "Електро" else 0,
-                        "is_suspicious_mileage": 1 if (age >= 3 and km_per_year < 5) else 0,
-                        "is_new": 1 if age <= 3 else 0,
-                        # Старі збережені авто (до цього оновлення) можуть не мати цих
-                        # ключів — беремо безпечні дефолти, як у CarFeatures на бекенді.
-                        "Body_Name": c.get("body"),
-                        "Drive_Name": c.get("drive"),
-                        "Color_Name": c.get("color"),
-                        "Is_Crashed": bool(c.get("crashed", False)),
-                        "Custom": bool(c.get("custom", True)),
-                        "First_Owner": bool(c.get("first_owner", False)),
-                        "Exchange_Possible": bool(c.get("exchange", False)),
-                        "Is_Bargain": bool(c.get("bargain", False)),
-                        "Is_Urgent": bool(c.get("urgent", False)),
-                    })
+            with st.spinner("Пакетна оцінка…"):
+                payloads = [build_payload(c) for c in st.session_state.saved_cars]
                 try:
                     res_batch = requests.post(f"{BACKEND_URL}/predict_batch", json=payloads, timeout=60)
                     if res_batch.status_code == 200:
@@ -348,541 +406,404 @@ with col_main:
                             batch_df.rename(columns={
                                 "mark": "Марка", "model": "Модель",
                                 "predicted_price_usd": "Оцінка (USD)",
-                                "error": "Помилка"
+                                "error": "Помилка",
                             }, inplace=True)
                             batch_df.insert(2, "Рік", [c["year"] for c in st.session_state.saved_cars])
                             batch_df.insert(3, "Пробіг", [c["mileage"] for c in st.session_state.saved_cars])
-                            st.success("✅ Пакетна оцінка завершена!")
+                            st.success("Готово")
                             st.dataframe(batch_df, use_container_width=True)
                     else:
                         st.error(f"Помилка сервера: {res_batch.status_code}")
                 except Exception as e:
                     st.error(f"Помилка запиту: {e}")
-
                 if st.button("Закрити пакетну оцінку"):
                     st.session_state.run_batch = False
                     st.rerun()
 
-    if "url_params_applied" not in st.session_state:
-        _from_url = preload_from_query_params(valid_marks, mark_model_map)
-        if _from_url:
-            st.session_state["_preload"] = _from_url
-        st.session_state.url_params_applied = True
+if "url_params_applied" not in st.session_state:
+    _from_url = preload_from_query_params(valid_marks, mark_model_map)
+    if _from_url:
+        st.session_state["_preload"] = _from_url
+    st.session_state.url_params_applied = True
 
-    preload = st.session_state.pop("_preload", None)
+preload = st.session_state.pop("_preload", None)
 
-    # ── ФОРМА ВВОДУ ──────────────────────────────
-    with st.container(border=True):
-        st.subheader("📋 Основні характеристики")
-        col1, col2 = st.columns(2)
 
-        with col1:
-            mark_list = sorted(valid_marks) + ["Інша"]
-            mark_default = preload["mark"] if preload and preload["mark"] in mark_list else mark_list[0]
-            mark = st.selectbox(
-                "Марка автомобіля",
-                mark_list,
-                index=_select_index(mark_list, mark_default),
-                key="car_mark",
-            )
+def preload_or(key, fallback):
+    if not preload:
+        return fallback
+    val = preload.get(key, fallback)
+    return fallback if val is None else val
 
-            available_models = (["Інша"] if mark == "Інша"
-                                else sorted(mark_model_map.get(mark, [])) + ["Інша"])
-            if len(available_models) == 1 and mark != "Інша" and not mark_model_map.get(mark):
-                st.caption(
-                    "⚠️ Для цієї марки немає списку моделей на сервері — оберіть «Інша» "
-                    "або оновіть valid_categories.json (export_valid_categories.py)."
-                )
-            model_default = (
-                preload["model"]
-                if preload and preload.get("model") in available_models
-                else available_models[0]
-            )
-            model_name = st.selectbox(
-                "Модель автомобіля",
-                available_models,
-                index=_select_index(available_models, model_default),
-                key=f"car_model_{mark}",
-            )
 
-            year = st.number_input("Рік випуску",
-                                   min_value=1990, max_value=CURRENT_YEAR, step=1,
-                                   value=int(preload["year"]) if preload else 2020)
-            mileage = st.number_input("Пробіг (тис. км)",
-                                      min_value=0, max_value=1000, step=5,
-                                      value=int(preload["mileage"]) if preload else 100)
+with st.container(border=True):
+    st.markdown("### Характеристики")
+    st.caption("Невідомі поля можна лишити як «Не вказано» — модель навчена на пропусках.")
+    col1, col2 = st.columns(2)
 
-        with col2:
-            available_gearboxes = (
-                gearbox_mapping.get(mark, {}).get(model_name, default_gearboxes)
-                or default_gearboxes
-            )
-            gb_default = (
-                preload.get("gearbox")
-                if preload and preload.get("gearbox") in available_gearboxes
-                else available_gearboxes[0]
-            )
-            gearbox = st.selectbox(
-                "Коробка передач",
-                available_gearboxes,
-                index=_select_index(available_gearboxes, gb_default),
-                key=f"car_gearbox_{mark}_{model_name}",
-            )
-
-            available_fuels = (
-                fuel_mapping.get(mark, {}).get(model_name, default_fuels)
-                or default_fuels
-            )
-            available_fuels = ([f for f in available_fuels
-                                if f not in ("Не вказано", "Other", "")] or ["Бензин"])
-            fuel_default = (
-                preload.get("fuel")
-                if preload and preload.get("fuel") in available_fuels
-                else available_fuels[0]
-            )
-            fuel_type = st.selectbox(
-                "Тип пального",
-                available_fuels,
-                index=_select_index(available_fuels, fuel_default),
-                key=f"car_fuel_{mark}_{model_name}",
-            )
-
-            if fuel_type == "Електро":
-                st.text_input("Об'єм двигуна (л)", value="0.0 (Електро)", disabled=True)
-                engine_capacity = 0.0
-            else:
-                available_caps = (
-                    engine_mapping.get(mark, {}).get(model_name, default_capacities)
-                    or default_capacities
-                )
-                eng_default = preload.get("engine") if preload else None
-                if eng_default is not None:
-                    try:
-                        eng_default = float(eng_default)
-                    except (TypeError, ValueError):
-                        eng_default = None
-                if eng_default not in available_caps:
-                    eng_default = available_caps[0]
-                engine_capacity = st.selectbox(
-                    "Об'єм двигуна (л)",
-                    available_caps,
-                    index=_select_index(available_caps, eng_default),
-                    key=f"car_engine_{mark}_{model_name}",
-                )
-
-        st.divider()
-
-        # ── РОЗШИРЕНІ ПАРАМЕТРИ (З API.PY) ────────
-        with st.expander("⚙️ Додаткові параметри (Нові фічі з парсера)"):
-            st.info(
-                "💡 Ці поля впливають на ціну через прозорий шар корективів на бекенді "
-                "(ДТП, розмитнення, привід, кузов, перший власник) — не через саму ML-модель. "
-                "Модель LightGBM ще не перенавчена на цих ознаках, тож повний облік (feature importance, "
-                "взаємодія з іншими фічами) з'явиться після перенавчання на розширеному датасеті. "
-                "Поля торгу/терміновості/обміну — інформаційні, на ціну не впливають.",
-                icon="ℹ️")
-            col3, col4, col5 = st.columns(3)
-
-            with col3:
-                st.markdown("**Технічні деталі**")
-                body_default = preload.get("body") if preload and preload.get("body") in body_types else body_types[0]
-                body_name = st.selectbox("Кузов", body_types, index=body_types.index(body_default))
-                drive_default = preload.get("drive") if preload and preload.get("drive") in drive_types else drive_types[0]
-                drive_name = st.selectbox("Привід", drive_types, index=drive_types.index(drive_default))
-                color_default = preload.get("color") if preload and preload.get("color") in color_names else color_names[0]
-                color_name = st.selectbox("Колір", color_names, index=color_names.index(color_default))
-
-            with col4:
-                st.markdown("**Стан та Походження**")
-                is_crashed = st.checkbox("Після ДТП (Бите)", value=bool(preload.get("crashed", False)) if preload else False)
-                is_custom = st.checkbox("Розмитнене авто", value=bool(preload.get("custom", True)) if preload else True)
-                first_owner = st.checkbox("Перший власник", value=bool(preload.get("first_owner", False)) if preload else False)
-
-            with col5:
-                st.markdown("**Умови продажу**")
-                is_bargain = st.checkbox("Можливий торг", value=bool(preload.get("bargain", True)) if preload else True)
-                is_urgent = st.checkbox("Терміновий продаж", value=bool(preload.get("urgent", False)) if preload else False)
-                exchange_possible = st.checkbox("Можливий обмін", value=bool(preload.get("exchange", False)) if preload else False)
-
-        # ── Індикатор стану ──────────────────────
-        age_preview = CURRENT_YEAR - year
-        sc0, sc0_color, sc0_label = condition_score(age_preview, mileage, fuel_type, gearbox)
-
-        # Візуально зменшуємо бал, якщо авто після ДТП (просто для логіки інтерфейсу)
-        if is_crashed:
-            sc0 = max(0, sc0 - 30)
-            sc0_color, sc0_label = "#E53935", "Поганий (Після ДТП)"
-
-        st.markdown(
-            f"""<div style="display:flex;align-items:center;gap:12px;margin-top:8px;
-                            padding:10px 16px;border-radius:8px;
-                            background:rgba(30,136,229,.06);border:1px solid rgba(30,136,229,.15)">
-                <div style="font-size:2rem;font-weight:800;color:{sc0_color}">{sc0}</div>
-                <div>
-                    <div style="font-size:.78rem;color:#888;">Умовний бал технічного стану</div>
-                    <div style="font-weight:600;color:{sc0_color};">{sc0_label}</div>
-                </div>
-                <div style="flex:1;height:8px;border-radius:4px;background:#eee;
-                            margin-left:8px;overflow:hidden">
-                    <div style="width:{sc0}%;height:100%;border-radius:4px;
-                                background:linear-gradient(90deg,{sc0_color}aa,{sc0_color})"></div>
-                </div>
-            </div>""",
-            unsafe_allow_html=True,
+    with col1:
+        mark_list = _with_unknown(sorted(valid_marks), extra="Інша")
+        mark = st.selectbox(
+            "Марка",
+            mark_list,
+            index=_select_index(mark_list, preload_or("mark", UNKNOWN)),
+            key="car_mark",
+        )
+        if mark in (UNKNOWN, "Інша"):
+            available_models = [UNKNOWN, "Інша"]
+        else:
+            available_models = _with_unknown(sorted(mark_model_map.get(mark, [])), extra="Інша")
+        model_name = st.selectbox(
+            "Модель",
+            available_models,
+            index=_select_index(available_models, preload_or("model", UNKNOWN)),
+            key=f"car_model_{mark}",
+        )
+        year = st.number_input(
+            "Рік випуску",
+            min_value=1990, max_value=CURRENT_YEAR, step=1,
+            value=int(preload["year"]) if preload and preload.get("year") else 2020,
+        )
+        mileage = st.number_input(
+            "Пробіг, тис. км",
+            min_value=0, max_value=1000, step=5,
+            value=int(preload["mileage"]) if preload and preload.get("mileage") else 100,
         )
 
-    st.write("")
+    with col2:
+        mapped_gb = gearbox_mapping.get(mark, {}).get(model_name, default_gearboxes)
+        available_gearboxes = _with_unknown(mapped_gb or default_gearboxes)
+        gearbox = st.selectbox(
+            "Коробка передач",
+            available_gearboxes,
+            index=_select_index(available_gearboxes, preload_or("gearbox", UNKNOWN)),
+            key=f"car_gearbox_{mark}_{model_name}",
+        )
 
-    # ── КНОПКИ ───────────────────────────────────
-    save_col, btn_col, _ = st.columns([1, 2, 1])
-    with save_col:
-        if st.button("💾 Зберегти авто", use_container_width=True, type="secondary"):
-            st.session_state.saved_cars.append({
-                "mark": mark, "model": model_name, "year": year,
-                "mileage": mileage, "fuel": fuel_type,
-                "gearbox": gearbox, "engine": engine_capacity,
-                "body": body_name, "drive": drive_name, "color": color_name,
-                "crashed": is_crashed, "custom": is_custom, "first_owner": first_owner,
-                "exchange": exchange_possible, "bargain": is_bargain, "urgent": is_urgent,
-            })
-            st.toast(f"{mark} {model_name} збережено!", icon="💾")
-    with btn_col:
-        calculate_btn = st.button("🚀 Розрахувати орієнтовну ціну",
-                                  use_container_width=True, type="primary")
+        mapped_fuel = fuel_mapping.get(mark, {}).get(model_name, default_fuels)
+        available_fuels = _with_unknown(mapped_fuel or default_fuels)
+        fuel_type = st.selectbox(
+            "Тип пального",
+            available_fuels,
+            index=_select_index(available_fuels, preload_or("fuel", UNKNOWN)),
+            key=f"car_fuel_{mark}_{model_name}",
+        )
 
-    # ── РОЗРАХУНОК ───────────────────────────────
-    if calculate_btn:
-        age = CURRENT_YEAR - year
-        km_per_year = mileage / (age + 1)
-        is_ev = 1 if fuel_type == "Електро" else 0
-        is_suspicious = 1 if (age >= 3 and km_per_year < 5) else 0
-        is_new = 1 if age <= 3 else 0
-
-        payload = {
-            "Mark": "Other" if mark == "Інша" else mark,
-            "Model": "Other" if model_name == "Інша" else model_name,
-            "Mileage": float(mileage),
-            "Gearbox": gearbox,
-            "Age": int(age),
-            "Fuel_Type": fuel_type,
-            "Engine_Capacity": float(engine_capacity),
-            "Km_per_Year": float(km_per_year),
-            "is_EV": int(is_ev),
-            "is_suspicious_mileage": int(is_suspicious),
-            "is_new": int(is_new),
-            # ── Нові поля: у ML-модель не йдуть, застосовуються бекендом
-            # як rule-based корективи поверх ціни (див. main.py) ──
-            "Body_Name": body_name,
-            "Drive_Name": drive_name,
-            "Color_Name": color_name,
-            "Is_Crashed": bool(is_crashed),
-            "Custom": bool(is_custom),
-            "First_Owner": bool(first_owner),
-            "Exchange_Possible": bool(exchange_possible),
-            "Is_Bargain": bool(is_bargain),
-            "Is_Urgent": bool(is_urgent),
-        }
-
-        progress = st.progress(0, text="Аналізуємо ринкові дані…")
-        try:
-            for pct in (20, 50):
-                time.sleep(0.12)
-                progress.progress(pct)
-
-            res = requests.post(f"{BACKEND_URL}/predict", json=payload, timeout=60)
-            progress.progress(90)
-
-            if res.status_code == 200:
-                data = res.json()
-                st.session_state.pred_price = data["predicted_price_usd"]
-                st.session_state.base_ml_price = data.get("base_ml_price_usd", data["predicted_price_usd"])
-                st.session_state.price_adjustments = data.get("price_adjustments", {})
-                st.session_state.shap_data = data.get("shap_values", {})
-                st.session_state.payload = payload
-                st.session_state.prediction_done = True
-
-                st.session_state.history.append({
-                    "Час": datetime.now().strftime("%H:%M:%S"),
-                    "Авто": f"{mark} {model_name}",
-                    "Рік": year,
-                    "Пробіг (тис.)": mileage,
-                    "Оцінка (USD)": int(data["predicted_price_usd"]),
-                })
-
-                progress.progress(100, text="Готово!")
-                time.sleep(0.3)
-                progress.empty()
-                st.rerun()
-
-            elif res.status_code == 422:
-                progress.empty()
-                st.error(f"⚠️ Помилка валідації: {res.json().get('detail', 'Некоректні параметри.')}")
-            elif res.status_code == 503:
-                progress.empty()
-                st.error("🔧 Модель ще не готова. Зачекайте кілька секунд і спробуйте ще раз.")
-            else:
-                progress.empty()
-                st.error(f"Помилка сервера: {res.status_code} — {res.text[:300]}")
-
-        except requests.exceptions.Timeout:
-            progress.empty()
-            st.error("⏱ Сервер не відповів за 60 секунд. Спробуйте ще раз.")
-        except requests.exceptions.ConnectionError:
-            progress.empty()
-            st.error(f"🔌 Не вдалося підключитися до бекенду (`{BACKEND_URL}`).")
-        except Exception as e:
-            progress.empty()
-            st.error(f"Несподівана помилка: {e}")
-
-    # ════════════════════════════════════════════
-    # РЕЗУЛЬТАТИ
-    # ════════════════════════════════════════════
-    if st.session_state.prediction_done:
-        st.markdown("---")
-        st.markdown("## 📊 Результати оцінки")
-
-        rates = get_exchange_rates()
-        p = st.session_state.payload
-
-        # ── Валюта + Ціна ────────────────────────
-        with st.container(border=True):
-            col_curr, col_price, col_range, col_score = st.columns([1, 2, 2, 1])
-
-            with col_curr:
-                curr = st.radio("Валюта:", ["USD", "UAH", "EUR"],
-                                horizontal=False, key="currency_radio_selector")
-                if curr != "USD":
-                    st.caption(f"1 USD = {rates[curr]:.2f} {curr}")
-
-            price_usd = st.session_state.pred_price
-            price_conv = price_usd * rates[curr]
-            margin = price_conv * 0.05
-
-            with col_price:
-                st.metric("Справедлива ринкова вартість", fmt_money(price_conv, curr))
-            with col_range:
-                st.metric(
-                    "Діапазон ринкових цін",
-                    value=f"Від {fmt_money(price_conv - margin, curr)}",
-                    delta=f"До {fmt_money(price_conv + margin, curr)}",
-                    delta_color="off",
-                )
-
-            sc, sc_color, sc_label = condition_score(
-                p.get("Age", 0), p.get("Mileage", 0),
-                p.get("Fuel_Type", ""), p.get("Gearbox", ""),
-            )
-            with col_score:
-                st.markdown(score_ring_svg(sc, sc_color, sc_label), unsafe_allow_html=True)
-
-        # ── Розбивка: ML-ціна + евристичні корективи ──
-        if st.session_state.price_adjustments:
-            with st.expander("🧮 З чого складається фінальна ціна?"):
-                base_conv = st.session_state.base_ml_price * rates[curr]
-                st.caption(f"Базова оцінка моделі (LightGBM): **{fmt_money(base_conv, curr)}**")
-                for label, amount_usd in st.session_state.price_adjustments.items():
-                    amount_conv = amount_usd * rates[curr]
-                    sign = "+" if amount_usd >= 0 else "−"
-                    st.write(f"{'🟢' if amount_usd >= 0 else '🔴'} {label}: {sign}{fmt_money(abs(amount_conv), curr)}")
-                st.caption(
-                    "Ці корективи — правила, а не результат навчання моделі "
-                    "(модель поки не бачила ці ознаки в тренувальних даних)."
-                )
-
-        # ── Попередження про пробіг ──────────────
-        if p.get("is_suspicious_mileage") == 1:
-            st.warning(
-                f"⚠️ **Підозрілий пробіг:** Для авто віком {p.get('Age')} р. середній пробіг "
-                f"лише **{p.get('Km_per_Year'):.1f} тис. км/рік**. ШІ врахував можливе скручування.",
-                icon="⚠️",
-            )
-
-        # ── SHAP ─────────────────────────────────
-        if st.session_state.shap_data:
-            with st.expander("🔍 Як ШІ розрахував цю ціну?"):
-                st.caption("Вплив кожної характеристики на прогнозовану ціну:")
-                df_shap = pd.DataFrame(
-                    list(st.session_state.shap_data.items()),
-                    columns=["Характеристика", "Вплив ($)"],
-                ).sort_values("Вплив ($)")
-                df_shap["Колір"] = np.where(df_shap["Вплив ($)"] > 0, "#43A047", "#E53935")
-
-                fig, ax = plt.subplots(figsize=(10, max(3, len(df_shap) * 0.6)))
-                fig.patch.set_alpha(0.0)
-                ax.patch.set_alpha(0.0)
-                ax.barh(df_shap["Характеристика"], df_shap["Вплив ($)"],
-                        color=df_shap["Колір"], height=0.55)
-                ax.axvline(0, color="grey", linewidth=1.2, linestyle="--")
-                for spine in ("top", "right"):
-                    ax.spines[spine].set_visible(False)
-                ax.tick_params(colors="gray")
-                ax.set_xlabel("Зміна ціни (USD)", color="gray")
-                st.pyplot(fig)
-
-        st.write("")
-        st.subheader("💡 Інструменти покупця")
-
-        col_tools1, col_tools2 = st.columns(2)
-
-        with col_tools1:
-            with st.container(border=True):
-                st.markdown("#### 🕵️ Детектор перекупів")
-                actual_price = st.number_input(
-                    "Ціна з оголошення (USD)", min_value=0, value=0, step=100,
-                )
-                if actual_price > 0:
-                    diff = actual_price - price_usd
-                    diff_pct = diff / price_usd * 100
-                    if diff_pct > 8:
-                        st.error(f"🚨 **Завищена!** На {diff_pct:.1f}% (${diff:,.0f}) дорожче.")
-                        st.caption(
-                            f"💬 Рекомендована ціна для торгу: "
-                            f"**${int(price_usd * 0.97):,}**".replace(",", " ")
-                        )
-                    elif diff_pct < -8:
-                        st.success(f"🔥 **Вигідно!** Нижче на {abs(diff_pct):.1f}% (${abs(diff):,.0f}).")
-                    else:
-                        st.info("✅ **Справедлива ціна.** Відповідає ринку.")
-                else:
-                    st.caption("Введіть ціну продавця, щоб перевірити.")
-
-        with col_tools2:
-            with st.container(border=True):
-                st.markdown("#### ⛽ Вартість пального")
-                annual_mileage = st.slider(
-                    "Пробіг за рік (тис. км)", min_value=1, max_value=100, value=15, step=1,
-                )
-                if p.get("is_EV") == 0:
-                    eng = p.get("Engine_Capacity", 0)
-                    consumption = eng * 2.5 + 2 if eng > 0 else 8
-                    yearly_uah = (annual_mileage * 1000 / 100) * consumption * 54
-                    yearly_usd = int(yearly_uah / rates["UAH"])
-                    st.info(
-                        f"Витрати на пальне: **~${yearly_usd:,}/рік**\n\n"
-                        f"*(Витрата ~{consumption:.1f} л / 100 км)*".replace(",", " ")
-                    )
-                else:
-                    ev_uah = (annual_mileage * 1000 / 100) * 18 * 4.32
-                    ev_usd = int(ev_uah / rates["UAH"])
-                    st.success(
-                        f"🔋 **Електромобіль.** Витрати на зарядку: **~${ev_usd:,}/рік**\n\n"
-                        f"*(~18 кВт·год / 100 км)*".replace(",", " ")
-                    )
-
-        # ── Кредитний калькулятор ─────────────────
-        with st.container(border=True):
-            st.markdown("#### 🏦 Кредитний калькулятор")
-            lc1, lc2, lc3 = st.columns(3)
-            with lc1:
-                down_pct = st.slider("Перший внесок (%)", 0, 80, 20, 5)
-            with lc2:
-                loan_months = st.selectbox("Термін", [12, 24, 36, 48, 60, 84], index=2)
-            with lc3:
-                rate_pct = st.number_input("Ставка (%/рік)", 0.0, 50.0, 15.0, 0.5)
-
-            down_usd = price_usd * down_pct / 100
-            principal_usd = price_usd - down_usd
-            monthly_usd = loan_monthly(principal_usd, rate_pct, loan_months)
-            total_pay_usd = monthly_usd * loan_months + down_usd
-            overpay_usd = total_pay_usd - price_usd
-
-            lm1, lm2, lm3, lm4 = st.columns(4)
-            lm1.metric("Перший внесок", fmt_money(down_usd * rates[curr], curr))
-            lm2.metric("Щомісячний платіж", fmt_money(monthly_usd * rates[curr], curr))
-            lm3.metric("Загальна сума", fmt_money(total_pay_usd * rates[curr], curr))
-            lm4.metric("Переплата", fmt_money(overpay_usd * rates[curr], curr),
-                       delta=f"+{overpay_usd / price_usd * 100:.1f}%", delta_color="inverse")
-
-        # ── Графік знецінення ─────────────────────
-        with st.container(border=True):
-            st.markdown(f"#### 📉 Прогноз знецінення (при {annual_mileage} тис. км/рік)")
-            depr_years = st.slider("Період прогнозу (років)", 1, 20, 5, 1)
+        if fuel_type == "Електро":
+            st.text_input("Об'єм двигуна, л", value="не потрібен (електро)", disabled=True)
+            engine_capacity = 0.0
+            engine_ui = 0.0
+        else:
+            mapped_caps = engine_mapping.get(mark, {}).get(model_name, default_capacities)
+            cap_opts = [UNKNOWN] + (mapped_caps or default_capacities)
+            eng_pre = preload.get("engine") if preload else None
             try:
-                res_depr = requests.post(
-                    f"{BACKEND_URL}/predict_depreciation",
-                    json={"car": p, "annual_mileage": float(annual_mileage), "years": depr_years},
-                    timeout=30,
-                )
-                if res_depr.status_code == 200:
-                    body = res_depr.json()
-                    depr_data = body.get("depreciation", [])
-                    if depr_data:
-                        df_graph = pd.DataFrame(depr_data)
-                        df_graph["Рік"] = df_graph["Year"].apply(
-                            lambda x: "Зараз" if x == 0 else f"Через {x} р."
-                        )
-                        chart = (
-                            alt.Chart(df_graph)
-                            .mark_area(
-                                line={"color": "#1E88E5"},
-                                color=alt.Gradient(
-                                    gradient="linear",
-                                    stops=[
-                                        alt.GradientStop(color="#1E88E5", offset=0),
-                                        alt.GradientStop(color="rgba(255,255,255,0)", offset=1),
-                                    ],
-                                    x1=1, x2=1, y1=1, y2=0,
-                                ),
-                            )
-                            .encode(
-                                x=alt.X("Рік", sort=None, title=""),
-                                y=alt.Y("Price", scale=alt.Scale(zero=False), title="Ціна ($)"),
-                                tooltip=["Рік", "Price"],
-                            )
-                            .properties(height=280)
-                        )
-                        st.altair_chart(chart, use_container_width=True)
-
-                        total_loss = body.get(
-                            "total_loss_usd",
-                            depr_data[0]["Price"] - depr_data[-1]["Price"],
-                        )
-                        st.warning(
-                            f"💸 Втрата вартості за {depr_years} років: "
-                            f"**{fmt_money(total_loss * rates[curr], curr)}**"
-                        )
-            except Exception:
-                st.caption("Графік знецінення тимчасово недоступний.")
-
-        # ── Порівняння авто ───────────────────────
-        st.write("")
-        col_add, _ = st.columns([1, 2])
-        with col_add:
-            if st.button("➕ Додати до порівняння", use_container_width=True):
-                st.session_state.compare_list.append({
-                    "Марка/Модель": f"{p['Mark']} {p['Model']}",
-                    "Рік": CURRENT_YEAR - p["Age"],
-                    "Оцінка ШІ (USD)": int(price_usd),
-                    "Оголошення (USD)": actual_price if actual_price > 0 else "—",
-                    "Бал стану": sc,
-                })
-                st.toast("Авто додано до порівняння!", icon="✅")
-
-        if st.session_state.compare_list:
-            st.markdown("### 📋 Таблиця порівняння")
-            st.dataframe(pd.DataFrame(st.session_state.compare_list), use_container_width=True)
-            if st.button("🗑 Очистити порівняння", type="secondary"):
-                st.session_state.compare_list = []
-                st.rerun()
-
-    # ── Історія розрахунків ───────────────────────
-    if st.session_state.history:
-        st.markdown("---")
-        with st.expander("🕐 Історія розрахунків у цій сесії"):
-            st.dataframe(
-                pd.DataFrame(st.session_state.history),
-                use_container_width=True, hide_index=True,
+                eng_pre = float(eng_pre) if eng_pre not in (None, UNKNOWN, "") else UNKNOWN
+            except (TypeError, ValueError):
+                eng_pre = UNKNOWN
+            engine_ui = st.selectbox(
+                "Об'єм двигуна, л",
+                cap_opts,
+                index=_select_index(cap_opts, eng_pre if eng_pre in cap_opts else UNKNOWN),
+                key=f"car_engine_{mark}_{model_name}",
             )
-            if st.button("🗑 Очистити історію", key="clear_history", type="secondary"):
-                st.session_state.history = []
-                st.rerun()
+            engine_capacity = 0.0 if engine_ui == UNKNOWN else float(engine_ui)
 
-    # ── Підвал ────────────────────────────────────
-    st.markdown("---")
+    with st.expander("Кузов, привід, колір"):
+        c3, c4, c5 = st.columns(3)
+        body_opts = _with_unknown(body_types, extra="Інше")
+        drive_opts = _with_unknown(drive_types)
+        color_opts = _with_unknown(color_names, extra="Інший")
+        with c3:
+            body_name = st.selectbox(
+                "Кузов", body_opts,
+                index=_select_index(body_opts, preload_or("body", UNKNOWN)),
+            )
+        with c4:
+            drive_name = st.selectbox(
+                "Привід", drive_opts,
+                index=_select_index(drive_opts, preload_or("drive", UNKNOWN)),
+            )
+        with c5:
+            color_name = st.selectbox(
+                "Колір", color_opts,
+                index=_select_index(color_opts, preload_or("color", UNKNOWN)),
+            )
+
+    with st.expander("Стан і умови продажу"):
+        st.caption("Кожне поле можна не заповнювати.")
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            is_crashed = st.radio("Після ДТП", TRI, horizontal=True, index=_select_index(TRI, preload_or("crashed", UNKNOWN)))
+            is_custom = st.radio("Розмитнене", TRI, horizontal=True, index=_select_index(TRI, preload_or("custom", UNKNOWN)))
+        with r2:
+            first_owner = st.radio("Перший власник", TRI, horizontal=True, index=_select_index(TRI, preload_or("first_owner", UNKNOWN)))
+            exchange_possible = st.radio("Можливий обмін", TRI, horizontal=True, index=_select_index(TRI, preload_or("exchange", UNKNOWN)))
+        with r3:
+            is_bargain = st.radio("Можливий торг", TRI, horizontal=True, index=_select_index(TRI, preload_or("bargain", UNKNOWN)))
+            is_urgent = st.radio("Терміновий продаж", TRI, horizontal=True, index=_select_index(TRI, preload_or("urgent", UNKNOWN)))
+
+    age_preview = CURRENT_YEAR - year
+    sc0, sc0_color, sc0_label = condition_score(
+        age_preview, mileage, fuel_type, gearbox, tri_to_bool(is_crashed),
+    )
     st.markdown(
-        "<p style='text-align:center;font-size:.78rem;color:#aaa;'>"
-        "Оцінка є орієнтовною та базується на ринкових даних. "
-        "Не є офіційним висновком про вартість транспортного засобу."
-        "</p>",
+        f"""<div class="status-bar">
+            <div style="font-size:1.8rem;font-weight:700;color:{sc0_color}">{sc0}</div>
+            <div>
+                <div style="font-size:.75rem;color:#b8b4ab;">Умовний бал стану</div>
+                <div style="font-weight:600;color:{sc0_color};">{sc0_label}</div>
+            </div>
+            <div style="flex:1;height:7px;border-radius:4px;background:#2a2c33;overflow:hidden">
+                <div style="width:{sc0}%;height:100%;background:{sc0_color}"></div>
+            </div>
+        </div>""",
         unsafe_allow_html=True,
     )
+
+st.write("")
+save_col, btn_col, _ = st.columns([1, 2, 1])
+form_snapshot = {
+    "mark": mark, "model": model_name, "year": year, "mileage": mileage,
+    "fuel": fuel_type, "gearbox": gearbox, "engine": engine_ui if fuel_type != "Електро" else 0.0,
+    "body": body_name, "drive": drive_name, "color": color_name,
+    "crashed": is_crashed, "custom": is_custom, "first_owner": first_owner,
+    "exchange": exchange_possible, "bargain": is_bargain, "urgent": is_urgent,
+}
+with save_col:
+    if st.button("Зберегти", use_container_width=True, type="secondary"):
+        st.session_state.saved_cars.append(form_snapshot)
+        st.toast(f"{mark} {model_name} збережено")
+with btn_col:
+    calculate_btn = st.button("Оцінити ринкову ціну", use_container_width=True, type="primary")
+
+if calculate_btn:
+    payload = build_payload(form_snapshot)
+    progress = st.progress(0, text="Рахуємо оцінку…")
+    try:
+        progress.progress(40)
+        res = requests.post(f"{BACKEND_URL}/predict", json=payload, timeout=60)
+        progress.progress(90)
+        if res.status_code == 200:
+            data = res.json()
+            st.session_state.pred_price = data["predicted_price_usd"]
+            st.session_state.shap_data = data.get("shap_values", {})
+            st.session_state.payload = payload
+            st.session_state.prediction_done = True
+            st.session_state.history.append({
+                "Час": datetime.now().strftime("%H:%M:%S"),
+                "Авто": f"{mark} {model_name}",
+                "Рік": year,
+                "Пробіг (тис.)": mileage,
+                "Оцінка (USD)": int(data["predicted_price_usd"]),
+            })
+            progress.empty()
+            st.rerun()
+        elif res.status_code == 422:
+            progress.empty()
+            st.error(f"Помилка валідації: {res.json().get('detail', 'Некоректні параметри.')}")
+        elif res.status_code == 503:
+            progress.empty()
+            st.error("Модель ще не готова. Зачекайте кілька секунд.")
+        else:
+            progress.empty()
+            st.error(f"Помилка сервера: {res.status_code} — {res.text[:300]}")
+    except requests.exceptions.Timeout:
+        progress.empty()
+        st.error("Сервер не відповів за 60 секунд.")
+    except requests.exceptions.ConnectionError:
+        progress.empty()
+        st.error(f"Немає зв'язку з бекендом (`{BACKEND_URL}`).")
+    except Exception as e:
+        progress.empty()
+        st.error(f"Несподівана помилка: {e}")
+
+if st.session_state.prediction_done:
+    st.markdown("---")
+    rates = get_exchange_rates()
+    p = st.session_state.payload
+
+    with st.container(border=True):
+        col_curr, col_price, col_range, col_score = st.columns([1, 2, 2, 1])
+        with col_curr:
+            curr = st.radio("Валюта", ["USD", "UAH", "EUR"], key="currency_radio_selector")
+            if curr != "USD":
+                st.caption(f"1 USD = {rates[curr]:.2f} {curr}")
+
+        price_usd = st.session_state.pred_price
+        price_conv = price_usd * rates[curr]
+        margin = price_conv * 0.05
+
+        with col_price:
+            st.markdown(
+                f"<div class='price-hero'><div class='amt'>{fmt_money(price_conv, curr)}</div>"
+                f"<div class='hint'>прогноз моделі LightGBM</div></div>",
+                unsafe_allow_html=True,
+            )
+        with col_range:
+            st.metric(
+                "Орієнтовний діапазон",
+                value=fmt_money(price_conv - margin, curr),
+                delta=f"до {fmt_money(price_conv + margin, curr)}",
+                delta_color="off",
+            )
+        sc, sc_color, sc_label = condition_score(
+            p.get("Age", 0), p.get("Mileage", 0) or 0,
+            p.get("Fuel_Type") or "", p.get("Gearbox") or "",
+            p.get("Is_Crashed"),
+        )
+        with col_score:
+            st.markdown(score_ring_svg(sc, sc_color, sc_label), unsafe_allow_html=True)
+
+    if p.get("is_suspicious_mileage") == 1:
+        st.warning(
+            f"Підозрілий пробіг: {p.get('Age')} р. і лише {p.get('Mileage')} тис. км. "
+            "Модель врахувала можливе скручування."
+        )
+
+    if st.session_state.shap_data:
+        with st.expander("Що найбільше вплинуло на ціну"):
+            df_shap = pd.DataFrame(
+                list(st.session_state.shap_data.items()),
+                columns=["Характеристика", "Вплив ($)"],
+            ).sort_values("Вплив ($)")
+            df_shap["Колір"] = np.where(df_shap["Вплив ($)"] > 0, "#7dcea0", "#e07a6a")
+            fig, ax = plt.subplots(figsize=(10, max(3, len(df_shap) * 0.55)))
+            fig.patch.set_facecolor("#14161c")
+            ax.set_facecolor("#14161c")
+            ax.barh(df_shap["Характеристика"], df_shap["Вплив ($)"], color=df_shap["Колір"], height=0.55)
+            ax.axvline(0, color="#6f6a62", linewidth=1.0, linestyle="--")
+            ax.tick_params(colors="#d9d3c7")
+            ax.set_xlabel("Зміна ціни, USD", color="#b8b4ab")
+            for spine in ax.spines.values():
+                spine.set_color("#3a3d46")
+            st.pyplot(fig)
+
+    st.subheader("Інструменти")
+    col_tools1, col_tools2 = st.columns(2)
+    with col_tools1:
+        with st.container(border=True):
+            st.markdown("#### Ціна в оголошенні")
+            actual_price = st.number_input("USD", min_value=0, value=0, step=100)
+            if actual_price > 0:
+                diff = actual_price - price_usd
+                diff_pct = diff / price_usd * 100
+                if diff_pct > 8:
+                    st.error(f"Завищена на {diff_pct:.1f}% (${diff:,.0f}).")
+                elif diff_pct < -8:
+                    st.success(f"Нижче ринку на {abs(diff_pct):.1f}% (${abs(diff):,.0f}).")
+                else:
+                    st.info("Близько до ринкової оцінки.")
+            else:
+                st.caption("Введіть ціну продавця для порівняння.")
+
+    with col_tools2:
+        with st.container(border=True):
+            st.markdown("#### Витрати на пальне")
+            annual_mileage = st.slider("Пробіг за рік, тис. км", 1, 100, 15, 1)
+            if p.get("is_EV") == 0:
+                eng = p.get("Engine_Capacity") or 0
+                consumption = eng * 2.5 + 2 if eng > 0 else 8
+                yearly_uah = (annual_mileage * 1000 / 100) * consumption * 54
+                yearly_usd = int(yearly_uah / rates["UAH"])
+                st.info(f"Орієнтовно ${yearly_usd:,}/рік  ·  ~{consumption:.1f} л/100 км".replace(",", " "))
+            else:
+                ev_uah = (annual_mileage * 1000 / 100) * 18 * 4.32
+                ev_usd = int(ev_uah / rates["UAH"])
+                st.success(f"Електро · зарядка ~${ev_usd:,}/рік".replace(",", " "))
+
+    with st.container(border=True):
+        st.markdown("#### Кредит")
+        lc1, lc2, lc3 = st.columns(3)
+        with lc1:
+            down_pct = st.slider("Перший внесок, %", 0, 80, 20, 5)
+        with lc2:
+            loan_months = st.selectbox("Термін, міс.", [12, 24, 36, 48, 60, 84], index=2)
+        with lc3:
+            rate_pct = st.number_input("Ставка, %/рік", 0.0, 50.0, 15.0, 0.5)
+        down_usd = price_usd * down_pct / 100
+        principal_usd = price_usd - down_usd
+        monthly_usd = loan_monthly(principal_usd, rate_pct, loan_months)
+        total_pay_usd = monthly_usd * loan_months + down_usd
+        overpay_usd = total_pay_usd - price_usd
+        lm1, lm2, lm3, lm4 = st.columns(4)
+        lm1.metric("Перший внесок", fmt_money(down_usd * rates[curr], curr))
+        lm2.metric("Щомісяця", fmt_money(monthly_usd * rates[curr], curr))
+        lm3.metric("Всього", fmt_money(total_pay_usd * rates[curr], curr))
+        lm4.metric("Переплата", fmt_money(overpay_usd * rates[curr], curr),
+                   delta=f"+{overpay_usd / price_usd * 100:.1f}%", delta_color="inverse")
+
+    with st.container(border=True):
+        st.markdown(f"#### Знецінення · {annual_mileage} тис. км/рік")
+        depr_years = st.slider("Горизонт, років", 1, 20, 5, 1)
+        try:
+            res_depr = requests.post(
+                f"{BACKEND_URL}/predict_depreciation",
+                json={"car": p, "annual_mileage": float(annual_mileage), "years": depr_years},
+                timeout=30,
+            )
+            if res_depr.status_code == 200:
+                body = res_depr.json()
+                depr_data = body.get("depreciation", [])
+                if depr_data:
+                    df_graph = pd.DataFrame(depr_data)
+                    df_graph["Рік"] = df_graph["Year"].apply(lambda x: "Зараз" if x == 0 else f"+{x} р.")
+                    chart = (
+                        alt.Chart(df_graph)
+                        .mark_area(
+                            line={"color": "#e8c584"},
+                            color=alt.Gradient(
+                                gradient="linear",
+                                stops=[
+                                    alt.GradientStop(color="#e8c584", offset=0),
+                                    alt.GradientStop(color="rgba(12,13,16,0)", offset=1),
+                                ],
+                                x1=1, x2=1, y1=1, y2=0,
+                            ),
+                        )
+                        .encode(
+                            x=alt.X("Рік", sort=None, title=""),
+                            y=alt.Y("Price", scale=alt.Scale(zero=False), title="Ціна, $"),
+                            tooltip=["Рік", "Price"],
+                        )
+                        .properties(height=280)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
+                    total_loss = body.get("total_loss_usd", depr_data[0]["Price"] - depr_data[-1]["Price"])
+                    st.warning(f"Втрата за {depr_years} р.: {fmt_money(total_loss * rates[curr], curr)}")
+        except Exception:
+            st.caption("Графік знецінення тимчасово недоступний.")
+
+    col_add, _ = st.columns([1, 2])
+    with col_add:
+        if st.button("Додати до порівняння", use_container_width=True):
+            st.session_state.compare_list.append({
+                "Марка/Модель": f"{p['Mark']} {p['Model']}",
+                "Рік": CURRENT_YEAR - p["Age"],
+                "Оцінка (USD)": int(price_usd),
+                "Оголошення (USD)": actual_price if actual_price > 0 else "—",
+                "Бал стану": sc,
+            })
+            st.toast("Додано до порівняння")
+    if st.session_state.compare_list:
+        st.markdown("### Порівняння")
+        st.dataframe(pd.DataFrame(st.session_state.compare_list), use_container_width=True)
+        if st.button("Очистити порівняння", type="secondary"):
+            st.session_state.compare_list = []
+            st.rerun()
+
+if st.session_state.history:
+    st.markdown("---")
+    with st.expander("Історія цієї сесії"):
+        st.dataframe(pd.DataFrame(st.session_state.history), use_container_width=True, hide_index=True)
+        if st.button("Очистити історію", key="clear_history", type="secondary"):
+            st.session_state.history = []
+            st.rerun()
+
+st.markdown("---")
+st.markdown(
+    "<p style='text-align:center;font-size:.78rem;color:#8a857c;'>"
+    "Оцінка орієнтовна. Базується на ринкових оголошеннях і не є офіційною експертизою."
+    "</p>",
+    unsafe_allow_html=True,
+)
