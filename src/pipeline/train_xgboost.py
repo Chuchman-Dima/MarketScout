@@ -1,8 +1,17 @@
+import joblib
 import numpy as np
 from sklearn.pipeline import Pipeline
 from xgboost import XGBRegressor
 
-from common import CAT_FEATURES, RANDOM_SEED, CategoricalCaster, evaluate, load_train_test, save_result
+from common import (
+    CAT_FEATURES,
+    PROJECT_ROOT,
+    RANDOM_SEED,
+    CategoricalCaster,
+    evaluate,
+    load_train_test,
+    save_result,
+)
 
 
 def build_pipeline() -> Pipeline:
@@ -26,6 +35,11 @@ def main():
     pred_log = pipe.predict(X_test)
     metrics = evaluate(y_test_raw, pred_log)
     save_result("XGBoost", metrics)
+
+    out = PROJECT_ROOT / "models_results" / "xgboost_pipeline.pkl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(pipe, out)
+    print(f"Збережено модель: {out}")
 
 
 if __name__ == "__main__":
