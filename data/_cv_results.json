@@ -1,1 +1,32 @@
-{"CatBoost": {"mean": 1587.5, "std": 592.5}, "LightGBM": {"mean": 1460.4, "std": 524.0}, "XGBoost": {"mean": 1458.1, "std": 508.9}}
+{
+  "CatBoost": {
+    "mae": {
+      "mean": 2179.9,
+      "std": 18.4
+    },
+    "medae": {
+      "mean": 995.2,
+      "std": 2.0
+    }
+  },
+  "LightGBM": {
+    "mae": {
+      "mean": 1984.3,
+      "std": 10.4
+    },
+    "medae": {
+      "mean": 936.5,
+      "std": 4.9
+    }
+  },
+  "XGBoost": {
+    "mae": {
+      "mean": 1966.9,
+      "std": 11.1
+    },
+    "medae": {
+      "mean": 949.3,
+      "std": 6.6
+    }
+  }
+}

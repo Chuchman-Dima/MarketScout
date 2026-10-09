@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -128,7 +129,7 @@ def clean_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["Mileage"] = pd.to_numeric(df.get("Mileage"), errors="coerce")
     df.loc[df["Mileage"] <= 0, "Mileage"] = np.nan
     df["Engine_Capacity"] = pd.to_numeric(df["Engine_Capacity"], errors="coerce")
-    df.loc[df["Engine_Capacity"] < 0, "Engine_Capacity"] = np.nan
+    df.loc[df["Engine_Capacity"] <= 0, "Engine_Capacity"] = np.nan
 
     for num_col in ("SeatsNumber", "DoorsNumber", "Photos_Count", "Description_Length", "Options_Count"):
         if num_col in df.columns:
@@ -147,6 +148,72 @@ def clean_raw_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def build_and_apply_global_imputer(X_train: pd.DataFrame, X_test: pd.DataFrame):
+    """
+    Рахує моду/медіану ТІЛЬКИ для базової комплектації (об'єм, кузов, коробка).
+    Прапорці стану залишаються NaN, щоб модель їх не ігнорувала!
+    """
+    impute_cols_num = ["Engine_Capacity", "SeatsNumber", "DoorsNumber"]
+    impute_cols_cat = ["Gearbox", "Fuel_Type", "Drive_Name", "Body_Name"]
+
+    global_defs = {}
+    for c in impute_cols_num:
+        if c in X_train.columns:
+            val = X_train[c].dropna().median()
+            global_defs[c] = float(val) if pd.notna(val) else 0.0
+
+    for c in impute_cols_cat:
+        if c in X_train.columns:
+            valid = X_train[c][X_train[c] != UNKNOWN]
+            global_defs[c] = valid.mode().iloc[0] if not valid.empty else UNKNOWN
+
+    model_defs = {}
+    grouped = X_train.groupby(["Mark", "Model"])
+    for (mark, model), group in grouped:
+        key = f"{mark}___{model}"
+        model_defs[key] = {}
+
+        for c in impute_cols_num:
+            if c in group.columns:
+                valid_num = group[c].dropna()
+                val = valid_num.median() if not valid_num.empty else np.nan
+                model_defs[key][c] = float(val) if pd.notna(val) else global_defs.get(c, 0.0)
+
+        for c in impute_cols_cat:
+            if c in group.columns:
+                valid = group[c][group[c] != UNKNOWN]
+                model_defs[key][c] = valid.mode().iloc[0] if not valid.empty else global_defs.get(c, UNKNOWN)
+
+    def apply_imputation(df):
+        df_out = df.copy()
+        keys = df_out["Mark"] + "___" + df_out["Model"]
+
+        for c in impute_cols_num:
+            if c in df_out.columns:
+                mapped = keys.map(lambda k: model_defs.get(k, global_defs).get(c, global_defs.get(c, 0.0)))
+                mask = df_out[c].isna() | (df_out[c] <= 0)
+                df_out.loc[mask, c] = mapped[mask]
+
+        for c in impute_cols_cat:
+            if c in df_out.columns:
+                mapped = keys.map(lambda k: model_defs.get(k, global_defs).get(c, global_defs.get(c, UNKNOWN)))
+                mask = df_out[c].isna() | (df_out[c] == UNKNOWN) | (df_out[c] == "")
+                df_out.loc[mask, c] = mapped[mask]
+
+        return df_out
+
+    X_train_imp = apply_imputation(X_train)
+    X_test_imp = apply_imputation(X_test)
+
+    export_dict = {"global": global_defs, "by_model": model_defs}
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(DATA_DIR / "car_defaults.json", "w", encoding="utf-8") as f:
+        json.dump(export_dict, f, ensure_ascii=False, indent=2)
+    print(f"Збережено car_defaults.json у {DATA_DIR}")
+
+    return X_train_imp, X_test_imp
+
+
 def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["Km_per_Year"] = df["Mileage"] / (df["Age"] + 1)
@@ -155,7 +222,7 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     df["is_new"] = (df["Age"] <= 3).astype(int)
     df["is_luxury_brand"] = df["Mark"].isin(LUXURY_MARKS).astype(int)
     df["is_automatic_gearbox"] = df["Gearbox"].isin(AUTOMATIC_LIKE).astype(int)
-    df["Engine_missing"] = (df["Engine_Capacity"].fillna(0) == 0).astype(int)
+    df["Engine_missing"] = df["Engine_Capacity"].isna().astype(int)
     df["log_Mileage"] = np.log1p(df["Mileage"])
     df["Age_x_Mileage"] = df["Age"] * df["Mileage"]
     df["Decade"] = ((CURRENT_YEAR - df["Age"]) // 10 * 10).astype(int)
@@ -181,7 +248,7 @@ def main():
     df = df[
         (df["Price_USD"] >= 1000) & (df["Price_USD"] <= 250000)
         & (df["Age"] >= 0) & (df["Age"] <= 46)
-    ].copy()
+        ].copy()
     df = df[(df["Engine_Capacity"].isna()) | (df["Engine_Capacity"] <= 10)]
 
     df = add_derived_features(df)
@@ -199,10 +266,16 @@ def main():
         X, y_raw, test_size=0.2, random_state=RANDOM_SEED
     )
 
+    X_train, X_test = build_and_apply_global_imputer(X_train, X_test)
+
+    X_train["is_EV"] = (X_train["Fuel_Type"] == "Електро").astype(int)
+    X_train["is_automatic_gearbox"] = X_train["Gearbox"].isin(AUTOMATIC_LIKE).astype(int)
+    X_test["is_EV"] = (X_test["Fuel_Type"] == "Електро").astype(int)
+    X_test["is_automatic_gearbox"] = X_test["Gearbox"].isin(AUTOMATIC_LIKE).astype(int)
+
     group_rare_categories(X_train, X_test)
 
     print(f"Train: {X_train.shape}, Test: {X_test.shape}")
-    print(f"Категоріальних фіч: {len(CAT_FEATURES)}")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     X_train.to_parquet(DATA_DIR / "X_train.parquet")

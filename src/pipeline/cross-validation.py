@@ -12,7 +12,7 @@ train_*.py має main-guard і просто надає build_pipeline() - ту�
 import json
 
 import numpy as np
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, median_absolute_error
 from sklearn.model_selection import KFold
 
 from common import PROJECT_ROOT, RANDOM_SEED, load_train_test
@@ -36,6 +36,8 @@ def main():
 
     for name, build_fn in MODEL_BUILDERS.items():
         fold_mae = []
+        fold_medae = []
+
         for tr_idx, val_idx in kf.split(X_train):
             Xtr, Xval = X_train.iloc[tr_idx], X_train.iloc[val_idx]
             ytr, yval_raw = y_train.iloc[tr_idx], y_train_raw.iloc[val_idx]
@@ -43,14 +45,29 @@ def main():
             pipe = build_fn()  # свіжий пайплайн на кожен фолд - без витоку стану між фолдами
             pipe.fit(Xtr, ytr)
             pred = np.expm1(pipe.predict(Xval))
-            fold_mae.append(mean_absolute_error(yval_raw, pred))
 
-        cv_results[name] = {"mean": round(float(np.mean(fold_mae)), 1), "std": round(float(np.std(fold_mae)), 1)}
-        print(f"{name}: CV MAE = {cv_results[name]['mean']} ± {cv_results[name]['std']}")
+            fold_mae.append(mean_absolute_error(yval_raw, pred))
+            fold_medae.append(median_absolute_error(yval_raw, pred))
+
+        cv_results[name] = {
+            "mae": {
+                "mean": round(float(np.mean(fold_mae)), 1),
+                "std": round(float(np.std(fold_mae)), 1),
+            },
+            "medae": {
+                "mean": round(float(np.mean(fold_medae)), 1),
+                "std": round(float(np.std(fold_medae)), 1),
+            },
+        }
+
+        mae_stat = cv_results[name]["mae"]
+        medae_stat = cv_results[name]["medae"]
+        print(f"{name}: CV MAE      = {mae_stat['mean']} ± {mae_stat['std']}")
+        print(f"{name}: CV MedianAE = {medae_stat['mean']} ± {medae_stat['std']}")
 
     cv_path = PROJECT_ROOT / "data" / "_cv_results.json"
     with open(cv_path, "w", encoding="utf-8") as f:
-        json.dump(cv_results, f)
+        json.dump(cv_results, f, indent=2)
     print(f"Збережено {cv_path}")
 
 
