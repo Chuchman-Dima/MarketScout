@@ -1,0 +1,8 @@
+{"model": "LightGBM", "MAE": 1921.0, "MAPE": 15.75, "R2": 0.9189}
+{"model": "LightGBM", "MAE": 1921.0, "MAPE": 15.75, "R2": 0.9189}
+{"model": "LightGBM", "MAE": 1940.4, "MAPE": 16.11, "R2": 0.917}
+{"model": "LightGBM", "MAE": 1921.0, "MAPE": 15.75, "R2": 0.9189}
+{"model": "CatBoost", "MAE": 2151.6, "MAPE": 16.76, "R2": 0.8857}
+{"model": "LightGBM", "MAE": 1921.0, "MAPE": 15.75, "R2": 0.9189}
+{"model": "XGBoost", "MAE": 1903.4, "MAPE": 16.16, "R2": 0.9197}
+{"model": "LightGBM", "MAE": 1921.0, "MAPE": 15.75, "R2": 0.9189}
