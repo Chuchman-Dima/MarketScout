@@ -7,8 +7,9 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-import common  # noqa: F401 — CategoricalCaster для joblib.load pipeline
+import common  # noqa: F401
 import joblib
 import numpy as np
 import pandas as pd
@@ -21,6 +22,7 @@ from sklearn.pipeline import Pipeline
 
 BASE_DIR = Path(__file__).resolve().parent
 
+
 def _models_dir() -> Path:
     env = os.getenv("MODELS_DIR")
     if env:
@@ -28,7 +30,6 @@ def _models_dir() -> Path:
     docker = Path("/app/models_results")
     if docker.is_dir():
         return docker
-    # Якщо локально в src/backend, беремо батьківську директорію проєкту на 2 рівні вище
     if len(BASE_DIR.parents) > 1:
         return BASE_DIR.parents[1] / "models_results"
     return BASE_DIR / "models_results"
@@ -38,6 +39,7 @@ MODELS_DIR = _models_dir()
 MODEL_PATH = MODELS_DIR / "lightgbm_pipeline.pkl"
 CATEGORIES_PATH = MODELS_DIR / "valid_categories.json"
 CATEGORIES_PKL_PATH = MODELS_DIR / "valid_categories.pkl"
+DEFAULTS_PATH = MODELS_DIR / "car_defaults.json"
 
 # ─────────────────────────────────────────────
 # ЛОГУВАННЯ
@@ -52,8 +54,6 @@ log = logging.getLogger("auto_price")
 CURRENT_YEAR = 2026
 UNKNOWN = "Не вказано"
 
-# Статичний список преміум/люкс марок — має ЗБІГАТИСЯ зі списком у prepare.py,
-# інакше ознака is_luxury_brand на інференсі не відповідатиме тренуванню.
 LUXURY_MARKS = {
     "Aston Martin", "BMW-Alpina", "Lamborghini", "Rolls-Royce", "Ferrari",
     "Bentley", "Porsche", "Maserati", "Lexus", "Land Rover", "Jaguar",
@@ -71,7 +71,6 @@ COLOR_NAMES = [
     "Червоний", "Зелений", "Інший",
 ]
 
-# Порядок і склад колонок = MODEL_FEATURE_ORDER / CAT_FEATURES у src/pipeline/common.py
 MODEL_FEATURE_ORDER = [
     "Mark", "Model", "Modification", "Mileage", "Gearbox", "Age",
     "Fuel_Type", "Engine_Capacity", "Km_per_Year",
@@ -107,13 +106,13 @@ NUM_OPTIONAL = [
     "SeatsNumber", "DoorsNumber", "Photos_Count", "Description_Length", "Options_Count",
 ]
 
-
 # ─────────────────────────────────────────────
-# ЗАВАНТАЖЕННЯ МОДЕЛІ / КАТЕГОРІЙ (один раз)
+# ЗАВАНТАЖЕННЯ МОДЕЛІ / КАТЕГОРІЙ
 # ─────────────────────────────────────────────
-model: Pipeline | None = None          # Pipeline(categorize → LGBMRegressor), див. train_lightgbm.py
-explainer: shap.TreeExplainer | None = None  # будується один раз при старті - дорого створювати на кожен запит
+model: Pipeline | None = None
+explainer: shap.TreeExplainer | None = None
 categories: dict = {}
+car_defaults: dict = {}
 
 
 def _strip_trailer(categories_data: dict) -> dict:
@@ -128,7 +127,6 @@ def _strip_trailer(categories_data: dict) -> dict:
 
 
 def load_categories_data() -> dict:
-    """JSON з мапінгами; якщо їх немає — доповнює з legacy valid_categories.pkl."""
     if CATEGORIES_PATH.is_file():
         with open(CATEGORIES_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -136,15 +134,10 @@ def load_categories_data() -> dict:
         data = {}
 
     if not data.get("mark_model_mapping") and CATEGORIES_PKL_PATH.is_file():
-        log.info("Доповнюємо категорії з valid_categories.pkl…")
         legacy = joblib.load(CATEGORIES_PKL_PATH)
         for key in (
-            "valid_marks",
-            "valid_models",
-            "mark_model_mapping",
-            "engine_mapping",
-            "fuel_mapping",
-            "gearbox_mapping",
+                "valid_marks", "valid_models", "mark_model_mapping",
+                "engine_mapping", "fuel_mapping", "gearbox_mapping",
         ):
             data.setdefault(key, legacy.get(key, {} if "mapping" in key else []))
 
@@ -153,17 +146,12 @@ def load_categories_data() -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Завантажує модель, SHAP-explainer та категорії при старті."""
-    global model, explainer, categories
+    global model, explainer, categories, car_defaults
 
     log.info("Завантаження моделі…")
     try:
         model = joblib.load(MODEL_PATH)
-        # TreeExplainer будуємо один раз тут (ініціалізація ~0.3-0.5с) і
-        # перевикористовуємо в кожному /predict - сам прогноз SHAP потім
-        # займає мілісекунди, на відміну від повторної ініціалізації.
         explainer = shap.TreeExplainer(model.named_steps["model"])
-        log.info("Модель та SHAP-explainer завантажені успішно.")
     except Exception as e:
         log.error(f"Помилка завантаження моделі: {e}")
         model = None
@@ -172,34 +160,27 @@ async def lifespan(app: FastAPI):
     log.info("Завантаження категорій…")
     try:
         categories = load_categories_data()
-        if categories.get("mark_model_mapping"):
-            log.info(
-                "Категорії завантажені (%d марок, мапінг моделей OK).",
-                len(categories.get("valid_marks", [])),
-            )
-        elif categories:
-            log.warning(
-                "Категорії без mark_model_mapping — у UI буде лише «Інша» для моделей. "
-                "Запустіть src/pipeline/export_valid_categories.py"
-            )
-        else:
-            log.warning("Категорії порожні.")
     except Exception as e:
         log.error(f"Помилка завантаження категорій: {e}")
         categories = {}
 
-    yield  # ← сервер працює тут
+    try:
+        if DEFAULTS_PATH.is_file():
+            with open(DEFAULTS_PATH, "r", encoding="utf-8") as f:
+                car_defaults = json.load(f)
+            log.info("Значення за замовчуванням (car_defaults) успішно завантажено.")
+    except Exception as e:
+        log.error(f"Помилка завантаження car_defaults: {e}")
+
+    yield
 
     log.info("Зупинка сервера.")
 
 
-# ─────────────────────────────────────────────
-# ЗАСТОСУНОК
-# ─────────────────────────────────────────────
 app = FastAPI(
     title="Auto Price Predictor API",
     version="2.1.0",
-    description="ML-бекенд для прогнозу ринкової ціни автомобілів. Усі ознаки йдуть у модель, без евристичних коефіцієнтів.",
+    description="ML-бекенд для прогнозу ринкової ціни автомобілів.",
     lifespan=lifespan,
 )
 
@@ -211,9 +192,6 @@ app.add_middleware(
 )
 
 
-# ─────────────────────────────────────────────
-# ГЛОБАЛЬНИЙ ОБРОБНИК ПОМИЛОК
-# ─────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     log.error(f"Необроблена помилка: {exc}")
@@ -273,6 +251,23 @@ class CarFeatures(BaseModel):
     With_Video: bool | None = Field(default=None)
     Desc_Ideal: bool | None = Field(default=None)
 
+    @field_validator(
+        "Engine_Capacity", "Km_per_Year", "SeatsNumber", "DoorsNumber",
+        "Photos_Count", "Description_Length", "Options_Count",
+        "is_EV", "is_suspicious_mileage", "is_new",
+        "Is_Crashed", "Custom", "First_Owner", "Is_Leasing",
+        "Has_VIN", "Is_Checked_VIN", "VIN_Has_Restrictions",
+        "Has_Plate", "Is_Checked_Plate", "Is_Dealer", "Phone_Verified",
+        "Exchange_Possible", "Auction_Possible", "Is_Bargain", "Is_Urgent",
+        "With_Video", "Desc_Ideal",
+        mode="before"
+    )
+    @classmethod
+    def preprocess_unknowns(cls, v: Any) -> Any:
+        if isinstance(v, str) and v.strip() in ("Не вказано", "", "Unknown", "NaN", "nan", "None"):
+            return None
+        return v
+
     @field_validator("Mileage", "Engine_Capacity", "Km_per_Year", "SeatsNumber", "DoorsNumber")
     @classmethod
     def must_be_finite(cls, v: float | None) -> float | None:
@@ -293,10 +288,6 @@ class DepreciationRequest(BaseModel):
 # ДОПОМІЖНІ ФУНКЦІЇ
 # ─────────────────────────────────────────────
 def process_prediction(raw_value: float) -> float:
-    """
-    Якщо модель повернула логарифм ціни (raw < 50) — застосовуємо expm1.
-    Інакше — вже готова ціна в USD.
-    """
     price = np.expm1(raw_value) if raw_value < 50 else float(raw_value)
     if not np.isfinite(price) or price <= 0:
         return 0.0
@@ -329,156 +320,118 @@ def _as_num(v, *, zero_as_missing: bool = False):
 
 
 def _as_bool01(v):
+    """Надійна конвертація булевих значень з урахуванням пустот."""
     if v is None:
         return np.nan
-    if isinstance(v, str) and v.strip() in ("", UNKNOWN, "None"):
-        return np.nan
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("", "не вказано", "unknown", "nan", "none"):
+            return np.nan
+        if s in ("0", "false", "ні", "no"):
+            return 0.0
+        if s in ("1", "true", "так", "yes"):
+            return 1.0
+    # Якщо це справжній bool (True/False)
     return float(int(bool(v)))
 
 
 def engineer_features(car_dict: dict) -> dict:
-    """Нормалізує unknown і додає похідні ознаки, як у prepare.py."""
     out = dict(car_dict)
     out["Mark"] = _as_cat(out.get("Mark"), mark_or_model=True)
     out["Model"] = _as_cat(out.get("Model"), mark_or_model=True)
+
+    key = f"{out['Mark']}___{out['Model']}"
+    defaults = car_defaults.get("by_model", {}).get(key, car_defaults.get("global", {}))
+    global_defaults = car_defaults.get("global", {})
+
+    # Об'єм двигуна + логіка Engine_missing
+    raw_engine = _as_num(out.get("Engine_Capacity"))
+    out["Engine_missing"] = int(pd.isna(raw_engine) or raw_engine <= 0)
+
+    if pd.isna(raw_engine) or raw_engine <= 0:
+        out["Engine_Capacity"] = defaults.get("Engine_Capacity", global_defaults.get("Engine_Capacity", 2.0))
+    else:
+        out["Engine_Capacity"] = raw_engine
+
+    # Фізична комплектація береться з дефолтів, якщо пусто
+    for col in ["Gearbox", "Fuel_Type", "Drive_Name", "Body_Name"]:
+        val = _as_cat(out.get(col))
+        if val == UNKNOWN:
+            out[col] = defaults.get(col, global_defaults.get(col, UNKNOWN))
+        else:
+            out[col] = val
+
+    # Інші категорії (місто, область) - без автозаповнення
     for col in MODEL_CAT_FEATURES:
-        if col in ("Mark", "Model"):
+        if col in ("Mark", "Model", "Gearbox", "Fuel_Type", "Drive_Name", "Body_Name"):
             continue
         out[col] = _as_cat(out.get(col))
 
+    # Прапорці історії/стану авто: ЗАЛИШАЄМО NaN ЯКЩО "НЕ ВКАЗАНО"
+    for col in BOOL_FEATURES:
+        out[col] = _as_bool01(out.get(col))
+
+    # Додаткові цифри
+    for col in ["SeatsNumber", "DoorsNumber"]:
+        val = _as_num(out.get(col), zero_as_missing=True)
+        if pd.isna(val):
+            out[col] = defaults.get(col, global_defaults.get(col, 0.0))
+        else:
+            out[col] = val
+
+    for col in ["Photos_Count", "Description_Length", "Options_Count"]:
+        out[col] = _as_num(out.get(col))
+
+    # Похідні ознаки
     mileage = _as_num(out.get("Mileage"), zero_as_missing=True)
     age = int(out.get("Age") or 0)
-    engine = _as_num(out.get("Engine_Capacity"))
-    if pd.isna(engine):
-        engine = 0.0
 
     out["Mileage"] = mileage
     out["Age"] = age
-    out["Engine_Capacity"] = engine
-    out["is_EV"] = int(out["Fuel_Type"] == "Електро")
+    out["is_EV"] = int(out.get("Fuel_Type") == "Електро")
     out["is_suspicious_mileage"] = int(bool(age > 10 and pd.notna(mileage) and mileage < 50))
     out["is_new"] = int(age <= 3)
     out["Km_per_Year"] = (mileage / (age + 1)) if pd.notna(mileage) else np.nan
     out["is_luxury_brand"] = int(out["Mark"] in LUXURY_MARKS)
-    out["is_automatic_gearbox"] = int(out["Gearbox"] in AUTOMATIC_LIKE)
-    out["Engine_missing"] = int(float(engine) == 0)
+    out["is_automatic_gearbox"] = int(out.get("Gearbox") in AUTOMATIC_LIKE)
     out["log_Mileage"] = float(np.log1p(mileage)) if pd.notna(mileage) else np.nan
     out["Age_x_Mileage"] = (age * mileage) if pd.notna(mileage) else np.nan
     out["Decade"] = int((CURRENT_YEAR - age) // 10 * 10)
 
-    for col in BOOL_FEATURES:
-        out[col] = _as_bool01(out.get(col))
-    for col in NUM_OPTIONAL:
-        val = _as_num(out.get(col), zero_as_missing=(col in ("SeatsNumber", "DoorsNumber")))
-        out[col] = val
     return out
 
 
 def build_dataframe(car_dict: dict) -> pd.DataFrame:
-    """Формує DataFrame з одного словника авто, з похідними ознаками,
-    у тому самому порядку колонок, що й на тренуванні."""
     enriched = engineer_features(car_dict)
     df = pd.DataFrame([enriched])
     return df[MODEL_FEATURE_ORDER]
 
 
 def compute_shap(car: CarFeatures, predicted_price: float) -> dict:
-    """
-    Обчислює SHAP-внески кожної характеристики через shap.TreeExplainer
-    (побудований один раз у lifespan, не на кожен запит).
-    Якщо SHAP з якоїсь причини недоступний — евристична апроксимація.
-    """
     try:
         df = build_dataframe(car.model_dump())
-        # categorize-крок переводить Mark/Model/Gearbox/Fuel_Type у pandas
-        # 'category' dtype з тим самим словником категорій, що бачила модель
-        # на тренуванні (CategoricalCaster.transform, див. common.py).
         X_transformed = model.named_steps["categorize"].transform(df)
         shap_row = explainer.shap_values(X_transformed)[0]
         feature_names = X_transformed.columns.tolist()
 
-        # Переводимо в зручні Ukrainian-назви та залишаємо топ-6 за abs
         label_map = {
-            "Age": "Вік авто",
-            "Mileage": "Пробіг",
-            "Engine_Capacity": "Об'єм двигуна",
-            "Km_per_Year": "Км на рік",
-            "Fuel_Type": "Тип пального",
-            "Gearbox": "Коробка передач",
-            "Mark": "Марка",
-            "Model": "Модель",
-            "Modification": "Модифікація",
-            "Body_Name": "Кузов",
-            "Drive_Name": "Привід",
-            "Color_Name": "Колір",
-            "Wheel_Name": "Кермо",
-            "SeatsNumber": "К-сть місць",
-            "DoorsNumber": "К-сть дверей",
-            "Is_Crashed": "ДТП",
-            "Custom": "Розмитнення",
-            "First_Owner": "Перший власник",
-            "Is_Leasing": "Лізинг",
-            "Has_VIN": "Є VIN",
-            "Is_Checked_VIN": "VIN перевірено",
-            "VIN_Has_Restrictions": "Обмеження VIN",
-            "State_Name": "Область",
-            "City": "Місто",
-            "Is_Dealer": "Дилер",
-            "Seller_Type": "Тип продавця",
-            "Exchange_Possible": "Обмін",
-            "Is_Bargain": "Торг",
-            "Is_Urgent": "Терміново",
-            "Photos_Count": "К-сть фото",
-            "With_Video": "Є відео",
-            "Description_Length": "Довжина опису",
-            "Options_Count": "К-сть опцій",
-            "Desc_Ideal": "«Ідеальний» в описі",
-            "is_EV": "Електро",
-            "is_suspicious_mileage": "Підозр. пробіг",
-            "is_new": "Нове авто (≤3р)",
-            "is_luxury_brand": "Преміум-марка",
-            "Engine_missing": "Об'єм не вказано",
-            "log_Mileage": "Пробіг (log)",
-            "Age_x_Mileage": "Вік × Пробіг",
-            "Decade": "Десятиліття випуску",
-            "is_automatic_gearbox": "Тип КПП (спрощ.)",
+            "Age": "Вік авто", "Mileage": "Пробіг", "Engine_Capacity": "Об'єм двигуна",
+            "Km_per_Year": "Км на рік", "Fuel_Type": "Тип пального", "Gearbox": "Коробка передач",
+            "Mark": "Марка", "Model": "Модель", "Body_Name": "Кузов", "Drive_Name": "Привід",
+            "Is_Crashed": "ДТП", "Custom": "Розмитнення", "First_Owner": "Перший власник",
         }
         shap_dict = {
             label_map.get(f, f): round(float(v) * predicted_price, 1)
             for f, v in zip(feature_names, shap_row)
         }
-        # Топ-6 за абсолютним значенням
-        top6 = dict(
-            sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True)[:6]
-        )
+        top6 = dict(sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True)[:6])
         return top6
 
     except Exception:
-        # Евристична апроксимація (якщо SHAP не підтримується)
-        base = predicted_price
-        age_effect = -base * 0.04 * car.Age if car.Age > 3 else base * 0.03
-        mile_effect = (
-            -base * 0.003 * car.Mileage
-            if car.Mileage > 100
-            else base * 0.015 * (100 - car.Mileage) / 100
-        )
-        fuel_effect = base * 0.03 if car.Fuel_Type in ("Дизель", "Гібрид (HEV)") else -base * 0.01
-        gear_effect = base * 0.02 if car.Gearbox == "Автомат" else -base * 0.01
-        eng = car.Engine_Capacity or 0
-        eng_effect = base * 0.01 * (eng - 1.6) if eng > 0 else 0
-        luxury_effect = base * 0.08 if car.Mark in LUXURY_MARKS else 0.0
-        return {
-            "Вік авто":       round(age_effect, 1),
-            "Пробіг":         round(mile_effect, 1),
-            "Тип пального":   round(fuel_effect, 1),
-            "Коробка передач": round(gear_effect, 1),
-            "Об'єм двигуна":  round(eng_effect, 1),
-            "Преміум-марка":  round(luxury_effect, 1),
-        }
+        return {}
 
 
 def _model_ready() -> None:
-    """Кидає 503 якщо модель не завантажена."""
     if model is None:
         raise HTTPException(status_code=503, detail="Модель не готова. Спробуйте пізніше.")
 
@@ -486,20 +439,17 @@ def _model_ready() -> None:
 # ─────────────────────────────────────────────
 # ЕНДПОІНТИ
 # ─────────────────────────────────────────────
-
 @app.get("/health", tags=["System"])
 def health_check():
-    """Перевірка стану сервера."""
     return {
-        "status":   "ok",
-        "model":    "loaded" if model is not None else "not_loaded",
+        "status": "ok",
+        "model": "loaded" if model is not None else "not_loaded",
         "categories": "loaded" if categories else "empty",
     }
 
 
 @app.get("/categories", tags=["Data"])
 def get_categories():
-    """Повертає всі допустимі значення для форми вводу."""
     if not categories:
         raise HTTPException(status_code=404, detail="Категорії не знайдені.")
     return {
@@ -512,11 +462,14 @@ def get_categories():
 
 @app.post("/predict", tags=["Prediction"])
 def predict_price(car: CarFeatures):
-    """
-    Прогнозує ринкову ціну автомобіля.
-    Повертає ціну в USD і SHAP-внески характеристик.
-    """
     _model_ready()
+
+    invalid_inputs = ("Не вказано", "", "Інша", "Unknown")
+    if car.Mark in invalid_inputs or car.Model in invalid_inputs:
+        raise HTTPException(
+            status_code=400,
+            detail="Для отримання оцінки необхідно обов'язково обрати Марку та Модель авто."
+        )
 
     try:
         df = build_dataframe(car.model_dump())
@@ -524,13 +477,11 @@ def predict_price(car: CarFeatures):
         base_price = process_prediction(raw)
 
         if base_price == 0.0:
-            raise HTTPException(status_code=422, detail="Не вдалося обчислити ціну для цих параметрів.")
+            raise HTTPException(status_code=422, detail="Не вдалося обчислити ціну.")
 
         shap_values = compute_shap(car, base_price)
 
-        log.info(
-            f"Predict: {car.Mark} {car.Model} {car.Age}р {car.Mileage}тис → ${base_price:,.0f}"
-        )
+        log.info(f"Predict: {car.Mark} {car.Model} {car.Age}р {car.Mileage}тис → ${base_price:,.0f}")
 
         return {
             "predicted_price_usd": base_price,
@@ -546,11 +497,11 @@ def predict_price(car: CarFeatures):
 
 @app.post("/predict_depreciation", tags=["Prediction"])
 def predict_depreciation(req: DepreciationRequest):
-    """
-    Прогнозує ціну авто на кілька років вперед,
-    враховуючи старіння та збільшення пробігу.
-    """
     _model_ready()
+
+    invalid_inputs = ("Не вказано", "", "Інша", "Unknown")
+    if req.car.Mark in invalid_inputs or req.car.Model in invalid_inputs:
+        raise HTTPException(status_code=400, detail="Вкажіть Марку та Модель.")
 
     try:
         base = req.car.model_dump()
@@ -558,10 +509,10 @@ def predict_depreciation(req: DepreciationRequest):
 
         for year_offset in range(req.years + 1):
             current = base.copy()
-            current["Age"]      += year_offset
-            current["Mileage"]  += req.annual_mileage * year_offset
+            current["Age"] += year_offset
+            current["Mileage"] += req.annual_mileage * year_offset
             current["Km_per_Year"] = current["Mileage"] / (current["Age"] + 1)
-            current["is_new"]   = int(current["Age"] <= 3)
+            current["is_new"] = int(current["Age"] <= 3)
             current["is_suspicious_mileage"] = int(
                 current["Age"] > 10 and current["Mileage"] is not None and current["Mileage"] < 50
             )
@@ -570,35 +521,23 @@ def predict_depreciation(req: DepreciationRequest):
             raw = model.predict(df)[0]
             price = process_prediction(raw)
 
-            # Ціна не може рости з часом
             if predictions and price > predictions[-1]["Price"]:
                 price = predictions[-1]["Price"]
 
             predictions.append({"Year": year_offset, "Price": price})
 
         total_loss = predictions[0]["Price"] - predictions[-1]["Price"]
-        log.info(
-            f"Depreciation: {req.car.Mark} {req.car.Model} "
-            f"→ втрата ${total_loss:,.0f} за {req.years} р."
-        )
-
         return {"depreciation": predictions, "total_loss_usd": round(total_loss, 2)}
 
     except Exception as e:
-        log.error(f"Помилка depreciation: {e}")
-        raise HTTPException(status_code=500, detail=f"Помилка розрахунку знецінення: {e}")
+        raise HTTPException(status_code=500, detail=f"Помилка розрахунку: {e}")
 
 
 @app.post("/predict_batch", tags=["Prediction"])
 def predict_batch(cars: list[CarFeatures]):
-    """
-    Пакетний прогноз для кількох авто одразу (до 20).
-    Зручно для порівняння варіантів.
-    """
     _model_ready()
-
     if len(cars) > 20:
-        raise HTTPException(status_code=400, detail="Максимум 20 авто за один запит.")
+        raise HTTPException(status_code=400, detail="Максимум 20 авто за запит.")
 
     results = []
     for car in cars:
@@ -606,16 +545,8 @@ def predict_batch(cars: list[CarFeatures]):
             df = build_dataframe(car.model_dump())
             raw = model.predict(df)[0]
             price = process_prediction(raw)
-            results.append({
-                "mark": car.Mark,
-                "model": car.Model,
-                "predicted_price_usd": price,
-            })
+            results.append({"mark": car.Mark, "model": car.Model, "predicted_price_usd": price})
         except Exception as e:
-            results.append({
-                "mark":  car.Mark,
-                "model": car.Model,
-                "error": str(e),
-            })
+            results.append({"mark": car.Mark, "model": car.Model, "error": str(e)})
 
     return {"results": results}
