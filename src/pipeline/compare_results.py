@@ -18,8 +18,8 @@ from pathlib import Path
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RESULTS_PATH = PROJECT_ROOT / "data" / "_results.json"
-CV_RESULTS_PATH = PROJECT_ROOT / "data" / "_cv_results.json"
+RESULTS_PATH = PROJECT_ROOT / "models_results" / "_results.json"
+CV_RESULTS_PATH = PROJECT_ROOT / "models_results" / "_cv_results.json"
 LOG_PATH = PROJECT_ROOT / "models_results" / "results_log.csv"
 
 
@@ -34,11 +34,32 @@ def main():
     try:
         with open(CV_RESULTS_PATH, "r", encoding="utf-8") as f:
             cv = json.load(f)
-        cv_df = pd.DataFrame([
-            {"model": name, "CV_MAE_mean": v["mean"], "CV_MAE_std": v["std"]}
-            for name, v in cv.items()
-        ])
+
+        cv_records = []
+        for name, v in cv.items():
+            # Підтримка обох форматів: нового (з підключами mae/medae) і старого
+            if "mae" in v:
+                mae_mean = v["mae"]["mean"]
+                mae_std = v["mae"]["std"]
+                medae_mean = v.get("medae", {}).get("mean")
+                medae_std = v.get("medae", {}).get("std")
+            else:
+                mae_mean = v.get("mean")
+                mae_std = v.get("std")
+                medae_mean = None
+                medae_std = None
+
+            cv_records.append({
+                "model": name,
+                "CV_MAE_mean": mae_mean,
+                "CV_MAE_std": mae_std,
+                "CV_MedAE_mean": medae_mean,
+                "CV_MedAE_std": medae_std,
+            })
+
+        cv_df = pd.DataFrame(cv_records)
         combined = test_df.merge(cv_df, on="model", how="left")
+
     except FileNotFoundError:
         print("_cv_results.json не знайдено - показую лише test-метрики "
               "(запусти cross-validation.py для повної картини).")
