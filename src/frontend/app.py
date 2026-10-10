@@ -22,6 +22,12 @@ CURRENT_YEAR = datetime.now().year
 UNKNOWN = "Не вказано"
 TRI = [UNKNOWN, "Ні", "Так"]
 
+# Припущення калькулятора пального — це НЕ результат моделі, а прості константи.
+# Змінюйте тут, щоб оновити розрахунок і підказку під ним.
+FUEL_PRICE_UAH_PER_L = 54
+EV_KWH_PER_100KM = 18
+EV_PRICE_UAH_PER_KWH = 4.32
+
 # ───────────────────────────── ДИЗАЙН ─────────────────────────────
 # Картки = st.container(border=True, key="card_..."): Streamlit додає клас st-key-<key>.
 CARD_SEL = '[class*="st-key-card_"]'
@@ -252,6 +258,13 @@ def section(num: str, title: str, sub: str = "") -> None:
 _defaults = {
     "prediction_done": False,
     "pred_price": 0.0,
+    "base_price": 0.0,
+    "price_adjustments": {},
+    "price_low": 0.0,
+    "price_high": 0.0,
+    "range_kind": "mape",
+    "range_pct": 16.4,
+    "assumed": {},
     "payload": {},
     "compare_list": [],
     "shap_data": {},
@@ -339,6 +352,21 @@ def _with_unknown(values: list, extra: str | None = None) -> list:
     return out
 
 
+def friendly_detail(res) -> str:
+    """Людське повідомлення з відповіді бекенду (без кодів і технічних подробиць)."""
+    try:
+        detail = res.json().get("detail")
+    except ValueError:
+        detail = None
+    if isinstance(detail, str) and detail.strip():
+        return detail
+    return "Перевірте, будь ласка, введені значення (рік, пробіг, об'єм двигуна) і спробуйте ще раз."
+
+
+def pct_text(value: float) -> str:
+    return f"{value * 100:+.0f}%".replace("-", "−")
+
+
 def tri_to_bool(value: str):
     if value == UNKNOWN:
         return None
@@ -388,15 +416,10 @@ def preload_from_query_params(valid_marks: list[str], mark_model_map: dict) -> d
         "gearbox": qp.get("gearbox", UNKNOWN),
         "fuel": qp.get("fuel", UNKNOWN),
         "engine": qp.get("engine"),
-        "body": qp.get("body", UNKNOWN),
         "drive": qp.get("drive", UNKNOWN),
-        "color": qp.get("color", UNKNOWN),
         "crashed": qp.get("crashed", UNKNOWN),
         "custom": qp.get("custom", UNKNOWN),
         "first_owner": qp.get("first_owner", UNKNOWN),
-        "exchange": qp.get("exchange", UNKNOWN),
-        "bargain": qp.get("bargain", UNKNOWN),
-        "urgent": qp.get("urgent", UNKNOWN),
     }
 
 
@@ -424,10 +447,8 @@ def build_payload(saved: dict) -> dict:
     mileage = float(saved["mileage"])
     fuel = saved.get("fuel") or UNKNOWN
     engine = saved.get("engine")
-    if engine in (None, UNKNOWN, ""):
-        engine_val = 0.0 if fuel == "Електро" else 0.0
-    else:
-        engine_val = float(engine)
+    # 0 = «не вказано»; бекенд підставить типовий об'єм для моделі (електро → 0)
+    engine_val = 0.0 if engine in (None, UNKNOWN, "") else float(engine)
     return {
         "Mark": ui_to_mark(saved["mark"]),
         "Model": ui_to_mark(saved["model"]),
@@ -440,15 +461,10 @@ def build_payload(saved: dict) -> dict:
         "is_EV": 1 if fuel == "Електро" else 0,
         "is_suspicious_mileage": 1 if (age > 10 and mileage < 50) else 0,
         "is_new": 1 if age <= 3 else 0,
-        "Body_Name": None if saved.get("body") in (None, UNKNOWN) else saved.get("body"),
         "Drive_Name": None if saved.get("drive") in (None, UNKNOWN) else saved.get("drive"),
-        "Color_Name": None if saved.get("color") in (None, UNKNOWN) else saved.get("color"),
         "Is_Crashed": tri_to_bool(saved.get("crashed", UNKNOWN)),
         "Custom": tri_to_bool(saved.get("custom", UNKNOWN)),
         "First_Owner": tri_to_bool(saved.get("first_owner", UNKNOWN)),
-        "Exchange_Possible": tri_to_bool(saved.get("exchange", UNKNOWN)),
-        "Is_Bargain": tri_to_bool(saved.get("bargain", UNKNOWN)),
-        "Is_Urgent": tri_to_bool(saved.get("urgent", UNKNOWN)),
     }
 
 
@@ -505,9 +521,8 @@ mark_model_map = valid_categories.get("mark_model_mapping", {})
 engine_mapping = valid_categories.get("engine_mapping", {})
 fuel_mapping = valid_categories.get("fuel_mapping", {})
 gearbox_mapping = valid_categories.get("gearbox_mapping", {})
-body_types = valid_categories.get("body_types", [])
 drive_types = valid_categories.get("drive_types", [])
-color_names = valid_categories.get("color_names", [])
+rule_adjustments = valid_categories.get("rule_adjustments", {})
 
 default_fuels = ["Бензин", "Дизель", "Електро", "Газ", "Гібрид (HEV)"]
 default_capacities = np.arange(1.0, 8.2, 0.2).round(1).tolist()
@@ -522,7 +537,7 @@ md_html("""
     <span class='brand-pill'>Market intelligence</span>
   </div>
   <div class='hero-title'>Ринкова оцінка вашого авто</div>
-  <p class='hero-sub'>Ринкова оцінка авто за повним набором ознак — без ручних коефіцієнтів.</p>
+  <p class='hero-sub'>Базова ціна — модель LightGBM за характеристиками авто. ДТП, розмитнення та перший власник — окремі прозорі корективи за правилами.</p>
   <div class='chips'>
     <span class='chip'>LightGBM</span>
     <span class='chip'>SHAP-пояснення</span>
@@ -572,6 +587,11 @@ if st.session_state.saved_cars:
                                 "predicted_price_usd": "Оцінка (USD)",
                                 "error": "Помилка",
                             }, inplace=True)
+                            if "price_adjustments" in batch_df.columns:
+                                batch_df["Корективи"] = batch_df["price_adjustments"].apply(
+                                    lambda d: ", ".join(f"{k} {v:+,.0f}$" for k, v in d.items())
+                                    if isinstance(d, dict) and d else "—")
+                                batch_df = batch_df.drop(columns=["price_adjustments"])
                             batch_df.insert(2, "Рік", [c["year"] for c in st.session_state.saved_cars])
                             batch_df.insert(3, "Пробіг", [c["mileage"] for c in st.session_state.saved_cars])
                             st.success("Готово")
@@ -602,7 +622,7 @@ def preload_or(key, fallback):
 
 # ───────────────────────────── ФОРМА ─────────────────────────────
 with card("form"):
-    card_head("Характеристики", "Невідомі поля можна лишити як «Не вказано» — модель навчена на пропусках.")
+    card_head("Характеристики", "Марка і модель обов'язкові. Решту можна лишити як «Не вказано» — підставимо типові значення для цієї моделі авто.")
 
     section("01", "Автомобіль", "Марка, модель, рік і пробіг")
     c_mark, c_model, c_year, c_mile = st.columns([1.3, 1.3, 1, 1])
@@ -681,41 +701,27 @@ with card("form"):
             )
             engine_capacity = 0.0 if engine_ui == UNKNOWN else float(engine_ui)
 
-    section("03", "Додатково", "Необов'язково — але чим більше деталей, тим точніша оцінка")
+    section("03", "Стан, історія та привід", "Необов'язково")
 
-    with st.expander("Кузов, привід, колір"):
-        c3, c4, c5 = st.columns(3)
-        body_opts = _with_unknown(body_types, extra="Інше")
+    with st.expander("Привід, ДТП, розмитнення, власник"):
         drive_opts = _with_unknown(drive_types)
-        color_opts = _with_unknown(color_names, extra="Інший")
-        with c3:
-            body_name = st.selectbox(
-                "Кузов", body_opts,
-                index=_select_index(body_opts, preload_or("body", UNKNOWN)),
-            )
-        with c4:
+        st.caption(
+            "Привід враховує сама модель. ДТП, розмитнення та перший власник у зібраних даних "
+            "відсутні, тому вони працюють як окремі корективи за правилами: "
+            f"після ДТП {pct_text(rule_adjustments.get('crashed', -0.15))}, "
+            f"нерозмитнене {pct_text(rule_adjustments.get('not_customs', -0.20))}, "
+            f"перший власник {pct_text(rule_adjustments.get('first_owner', 0.03))} до ціни моделі."
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
             drive_name = st.selectbox(
                 "Привід", drive_opts,
                 index=_select_index(drive_opts, preload_or("drive", UNKNOWN)),
             )
-        with c5:
-            color_name = st.selectbox(
-                "Колір", color_opts,
-                index=_select_index(color_opts, preload_or("color", UNKNOWN)),
-            )
-
-    with st.expander("Стан і умови продажу"):
-        st.caption("Кожне поле можна не заповнювати.")
-        r1, r2, r3 = st.columns(3)
-        with r1:
             is_crashed = st.radio("Після ДТП", TRI, horizontal=True, index=_select_index(TRI, preload_or("crashed", UNKNOWN)))
+        with col_b:
             is_custom = st.radio("Розмитнене", TRI, horizontal=True, index=_select_index(TRI, preload_or("custom", UNKNOWN)))
-        with r2:
             first_owner = st.radio("Перший власник", TRI, horizontal=True, index=_select_index(TRI, preload_or("first_owner", UNKNOWN)))
-            exchange_possible = st.radio("Можливий обмін", TRI, horizontal=True, index=_select_index(TRI, preload_or("exchange", UNKNOWN)))
-        with r3:
-            is_bargain = st.radio("Можливий торг", TRI, horizontal=True, index=_select_index(TRI, preload_or("bargain", UNKNOWN)))
-            is_urgent = st.radio("Терміновий продаж", TRI, horizontal=True, index=_select_index(TRI, preload_or("urgent", UNKNOWN)))
 
     age_preview = CURRENT_YEAR - year
     sc0, sc0_color, sc0_label = condition_score(
@@ -737,9 +743,8 @@ btn_col, save_col = st.columns([3, 1])
 form_snapshot = {
     "mark": mark, "model": model_name, "year": year, "mileage": mileage,
     "fuel": fuel_type, "gearbox": gearbox, "engine": engine_ui if fuel_type != "Електро" else 0.0,
-    "body": body_name, "drive": drive_name, "color": color_name,
+    "drive": drive_name,
     "crashed": is_crashed, "custom": is_custom, "first_owner": first_owner,
-    "exchange": exchange_possible, "bargain": is_bargain, "urgent": is_urgent,
 }
 with btn_col:
     calculate_btn = st.button("Оцінити ринкову ціну", use_container_width=True, type="primary")
@@ -749,7 +754,13 @@ with save_col:
         st.toast(f"{mark} {model_name} збережено")
 
 # ───────────────────────────── ЗАПИТ ДО БЕКЕНДУ ─────────────────────────────
-if calculate_btn:
+if calculate_btn and (mark == UNKNOWN or model_name == UNKNOWN):
+    _missing = [name for name, val in (("марку", mark), ("модель", model_name)) if val == UNKNOWN]
+    st.info(
+        f"Будь ласка, оберіть {' та '.join(_missing)} авто — без цього ми не зможемо зробити оцінку.",
+        icon="ℹ️",
+    )
+elif calculate_btn:
     payload = build_payload(form_snapshot)
     progress = st.progress(0, text="Рахуємо оцінку…")
     try:
@@ -759,6 +770,13 @@ if calculate_btn:
         if res.status_code == 200:
             data = res.json()
             st.session_state.pred_price = data["predicted_price_usd"]
+            st.session_state.base_price = data.get("base_ml_price_usd", data["predicted_price_usd"])
+            st.session_state.price_adjustments = data.get("price_adjustments", {})
+            st.session_state.price_low = data.get("price_low_usd") or data["predicted_price_usd"] * 0.84
+            st.session_state.price_high = data.get("price_high_usd") or data["predicted_price_usd"] * 1.16
+            st.session_state.range_kind = data.get("range_kind", "mape")
+            st.session_state.range_pct = data.get("range_pct", 16.4)
+            st.session_state.assumed = data.get("assumed_defaults", {})
             st.session_state.shap_data = data.get("shap_values", {})
             st.session_state.payload = payload
             st.session_state.prediction_done = True
@@ -771,9 +789,9 @@ if calculate_btn:
             })
             progress.empty()
             st.rerun()
-        elif res.status_code == 422:
+        elif res.status_code in (400, 422):
             progress.empty()
-            st.error(f"Помилка валідації: {res.json().get('detail', 'Некоректні параметри.')}")
+            st.info(friendly_detail(res), icon="ℹ️")
         elif res.status_code == 503:
             progress.empty()
             st.error("Модель ще не готова. Зачекайте кілька секунд.")
@@ -850,20 +868,27 @@ if st.session_state.prediction_done:
 
         price_usd = st.session_state.pred_price
         price_conv = price_usd * rates[curr]
-        margin = price_conv * 0.05
+        low_conv = st.session_state.price_low * rates[curr]
+        high_conv = st.session_state.price_high * rates[curr]
+        has_rules = bool(st.session_state.price_adjustments)
+        range_label = (
+            "Діапазон · 80% оцінок моделі"
+            if st.session_state.range_kind == "interval80"
+            else f"Типова похибка моделі · ±{st.session_state.range_pct:.0f}%"
+        )
 
         col_price, col_range, col_score = st.columns([2.4, 2, 1])
         with col_price:
             md_html(
                 f"<div class='res-label'>Прогнозована ринкова ціна</div>"
                 f"<div class='res-price'>{fmt_money(price_conv, curr)}</div>"
-                f"<div class='res-hint'>прогноз моделі LightGBM</div>"
+                f"<div class='res-hint'>{'модель LightGBM + корективи за правилами' if has_rules else 'прогноз моделі LightGBM'}</div>"
             )
         with col_range:
             md_html(
-                f"<div class='res-label'>Орієнтовний діапазон · ±5%</div>"
-                f"<div class='res-range'><span>{fmt_money(price_conv - margin, curr)}</span><i></i>"
-                f"<span>{fmt_money(price_conv + margin, curr)}</span></div>"
+                f"<div class='res-label'>{range_label}</div>"
+                f"<div class='res-range'><span>{fmt_money(low_conv, curr)}</span><i></i>"
+                f"<span>{fmt_money(high_conv, curr)}</span></div>"
             )
         sc, sc_color, sc_label = condition_score(
             p.get("Age", 0), p.get("Mileage", 0) or 0,
@@ -872,6 +897,21 @@ if st.session_state.prediction_done:
         )
         with col_score:
             md_html(score_ring_svg(sc, sc_color, sc_label, dark=True))
+
+    if st.session_state.price_adjustments:
+        with st.expander("З чого складається ціна?"):
+            st.write(f"**Модель LightGBM:** {fmt_money(st.session_state.base_price * rates[curr], curr)}")
+            for label, amount_usd in st.session_state.price_adjustments.items():
+                sign = "+" if amount_usd >= 0 else "−"
+                st.write(f"{label}: {sign}{fmt_money(abs(amount_usd) * rates[curr], curr)}")
+            st.write(f"**Разом:** {fmt_money(price_conv, curr)}")
+            st.caption(
+                "Корективи — прості правила, а не результат навчання: у зібраних оголошеннях немає "
+                "жодного прикладу ДТП/розмитнення/першого власника, тож модель не може їх «вивчити»."
+            )
+    if st.session_state.assumed:
+        _assumed = ", ".join(f"{k.lower()}: {v}" for k, v in st.session_state.assumed.items())
+        st.caption(f"Для полів, які ви не вказали, використано типові значення для цієї моделі авто — {_assumed}.")
 
     if p.get("is_suspicious_mileage") == 1:
         st.warning(
@@ -893,12 +933,12 @@ if st.session_state.prediction_done:
                 if actual_price > 0:
                     diff = actual_price - price_usd
                     diff_pct = diff / price_usd * 100
-                    if diff_pct > 8:
-                        st.error(f"Завищена на {diff_pct:.1f}% (${diff:,.0f}).")
-                    elif diff_pct < -8:
-                        st.success(f"Нижче ринку на {abs(diff_pct):.1f}% (${abs(diff):,.0f}).")
+                    if actual_price > st.session_state.price_high:
+                        st.error(f"Вище ринкового діапазону: на {diff_pct:.1f}% (${diff:,.0f}) дорожче за оцінку.")
+                    elif actual_price < st.session_state.price_low:
+                        st.success(f"Нижче ринкового діапазону: на {abs(diff_pct):.1f}% (${abs(diff):,.0f}) дешевше за оцінку.")
                     else:
-                        st.info("Близько до ринкової оцінки.")
+                        st.info("Усередині ринкового діапазону — ціна виглядає адекватною.")
                 else:
                     st.caption("Введіть ціну продавця для порівняння.")
 
@@ -909,13 +949,17 @@ if st.session_state.prediction_done:
                 if p.get("is_EV") == 0:
                     eng = p.get("Engine_Capacity") or 0
                     consumption = eng * 2.5 + 2 if eng > 0 else 8
-                    yearly_uah = (annual_mileage * 1000 / 100) * consumption * 54
+                    yearly_uah = (annual_mileage * 1000 / 100) * consumption * FUEL_PRICE_UAH_PER_L
                     yearly_usd = int(yearly_uah / rates["UAH"])
                     st.info(f"Орієнтовно ${yearly_usd:,}/рік  ·  ~{consumption:.1f} л/100 км".replace(",", " "))
+                    st.caption(f"Припущення (не з моделі): витрата ≈ {consumption:.1f} л/100 км за формулою "
+                               f"2.5·об'єм + 2, пальне {FUEL_PRICE_UAH_PER_L} грн/л.")
                 else:
-                    ev_uah = (annual_mileage * 1000 / 100) * 18 * 4.32
+                    ev_uah = (annual_mileage * 1000 / 100) * EV_KWH_PER_100KM * EV_PRICE_UAH_PER_KWH
                     ev_usd = int(ev_uah / rates["UAH"])
                     st.success(f"Електро · зарядка ~${ev_usd:,}/рік".replace(",", " "))
+                    st.caption(f"Припущення (не з моделі): {EV_KWH_PER_100KM} кВт·год/100 км, "
+                               f"{EV_PRICE_UAH_PER_KWH} грн/кВт·год.")
 
         if st.session_state.shap_data:
             with card("shap"):
