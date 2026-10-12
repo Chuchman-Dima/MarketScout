@@ -9,6 +9,8 @@ new_clean_data_20.csv
 cars_strict.csv
 #*.csv
 
+data/new_data/
+
 parser_state.json
 car_defaults.json
 engine_capacity_lookup.json
