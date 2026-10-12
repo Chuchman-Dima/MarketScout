@@ -6,7 +6,6 @@ __pycache__/
 cars_dataset.csv
 new_cars_dataset_2.csv
 new_clean_data_20.csv
-cars_strict.csv
 #*.csv
 
 data/new_data/
@@ -16,9 +15,7 @@ car_defaults.json
 engine_capacity_lookup.json
 #*.json
 
-*.jpg
-
-*.parquet
+/data/
 
 .env
 
