@@ -15,6 +15,7 @@ car_defaults.json
 engine_capacity_lookup.json
 #*.json
 
+/models_results/
 /data/
 
 .env
