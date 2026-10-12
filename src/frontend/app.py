@@ -537,7 +537,7 @@ md_html("""
     <span class='brand-pill'>Market intelligence</span>
   </div>
   <div class='hero-title'>Ринкова оцінка вашого авто</div>
-  <p class='hero-sub'>Базова ціна — модель LightGBM за характеристиками авто. ДТП, розмитнення та перший власник — окремі прозорі корективи за правилами.</p>
+  <p class='hero-sub'>Базова ціна — модель LightGBM за характеристиками авто.</p>
   <div class='chips'>
     <span class='chip'>LightGBM</span>
     <span class='chip'>SHAP-пояснення</span>
@@ -705,13 +705,6 @@ with card("form"):
 
     with st.expander("Привід, ДТП, розмитнення, власник"):
         drive_opts = _with_unknown(drive_types)
-        st.caption(
-            "Привід враховує сама модель. ДТП, розмитнення та перший власник у зібраних даних "
-            "відсутні, тому вони працюють як окремі корективи за правилами: "
-            f"після ДТП {pct_text(rule_adjustments.get('crashed', -0.15))}, "
-            f"нерозмитнене {pct_text(rule_adjustments.get('not_customs', -0.20))}, "
-            f"перший власник {pct_text(rule_adjustments.get('first_owner', 0.03))} до ціни моделі."
-        )
         col_a, col_b = st.columns(2)
         with col_a:
             drive_name = st.selectbox(
