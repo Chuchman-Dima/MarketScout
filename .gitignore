@@ -10,6 +10,8 @@ cars_strict.csv
 #*.csv
 
 parser_state.json
+car_defaults.json
+engine_capacity_lookup.json
 #*.json
 
 *.jpg
