@@ -1,0 +1,93 @@
+"""
+Збирає докупи все, що написали train_*.py (_results.json) і
+cross-validation.py (_cv_results.json), і показує одну зведену таблицю.
+
+Запускати ПІСЛЯ того, як прогнав усі train_*.py і cross-validation.py:
+    python prepare.py
+    python train_catboost.py
+    python train_lightgbm.py
+    python train_xgboost.py
+    python train_tree.py
+    python cross-validation.py
+    python compare_results.py
+"""
+
+import json
+from pathlib import Path
+
+import pandas as pd
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RESULTS_PATH = PROJECT_ROOT / "models_results" / "_results.json"
+CV_RESULTS_PATH = PROJECT_ROOT / "models_results" / "_cv_results.json"
+LOG_PATH = PROJECT_ROOT / "models_results" / "results_log.csv"
+
+
+def main():
+    rows = []
+    with open(RESULTS_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                rows.append(json.loads(line))
+    test_df = pd.DataFrame(rows).drop_duplicates(subset="model", keep="last")
+
+    try:
+        with open(CV_RESULTS_PATH, "r", encoding="utf-8") as f:
+            cv = json.load(f)
+
+        cv_records = []
+        for name, v in cv.items():
+            # Підтримка обох форматів: нового (з підключами mae/medae) і старого
+            if "mae" in v:
+                mae_mean = v["mae"]["mean"]
+                mae_std = v["mae"]["std"]
+                medae_mean = v.get("medae", {}).get("mean")
+                medae_std = v.get("medae", {}).get("std")
+            else:
+                mae_mean = v.get("mean")
+                mae_std = v.get("std")
+                medae_mean = None
+                medae_std = None
+
+            cv_records.append({
+                "model": name,
+                "CV_MAE_mean": mae_mean,
+                "CV_MAE_std": mae_std,
+                "CV_MedAE_mean": medae_mean,
+                "CV_MedAE_std": medae_std,
+            })
+
+        cv_df = pd.DataFrame(cv_records)
+        combined = test_df.merge(cv_df, on="model", how="left")
+
+    except FileNotFoundError:
+        print("_cv_results.json не знайдено - показую лише test-метрики "
+              "(запусти cross-validation.py для повної картини).")
+        combined = test_df
+
+    combined = combined.sort_values("MAE").reset_index(drop=True)
+
+    print("\n" + "=" * 72)
+    print("  ПОРІВНЯННЯ МОДЕЛЕЙ (відсортовано за MAE на test, краще зверху)")
+    print("=" * 72)
+    print(combined.to_string(index=False))
+    print("=" * 72)
+
+    winner = combined.iloc[0]
+    print(
+        f"\nПереможець за MAE: {winner['model']} "
+        f"(MAE={winner['MAE']}, MAPE={winner['MAPE']}%, R2={winner['R2']})"
+    )
+
+    if "CV_MAE_std" in combined.columns and pd.notna(winner.get("CV_MAE_std")):
+        max_std = combined["CV_MAE_std"].max()
+        if winner["CV_MAE_std"] == max_std and len(combined) > 1:
+            print("У переможця найбільший розкид по фолдах CV - "
+                  "перевір стабільність перед тим, як остаточно обирати цю модель.")
+
+    combined.to_csv(LOG_PATH, index=False)
+    print(f"\nЗбережено: {LOG_PATH}")
+
+
+if __name__ == "__main__":
+    main()

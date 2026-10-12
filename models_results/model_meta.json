@@ -1,0 +1,31 @@
+{
+  "model": "LightGBM",
+  "trained_at": "2026-10-10T21:42:04",
+  "features": [
+    "Mark",
+    "Model",
+    "Mileage",
+    "Gearbox",
+    "Age",
+    "Fuel_Type",
+    "Engine_Capacity",
+    "Drive_Name",
+    "Km_per_Year",
+    "is_EV",
+    "is_suspicious_mileage",
+    "is_new",
+    "is_luxury_brand",
+    "Engine_missing",
+    "log_Mileage",
+    "Age_x_Mileage",
+    "Decade",
+    "is_automatic_gearbox"
+  ],
+  "rows_train": 76796,
+  "mae": 1909.7,
+  "mape": 16.22,
+  "r2": 0.9227,
+  "rel_error_q10": 0.7972,
+  "rel_error_q90": 1.256,
+  "monotone_mileage": true
+}

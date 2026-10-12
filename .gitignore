@@ -11,8 +11,6 @@ new_clean_data_20.csv
 parser_state.json
 #*.json
 
-data/
-
 .env
 
 # C extensions
