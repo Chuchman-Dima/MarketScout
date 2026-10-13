@@ -1,7 +1,7 @@
 import os
 import re
 import time
-from datetime import datetime
+from datetime import date, datetime
 
 import altair as alt
 import matplotlib.pyplot as plt
@@ -23,10 +23,40 @@ UNKNOWN = "Не вказано"
 TRI = [UNKNOWN, "Ні", "Так"]
 
 # Припущення калькулятора пального — це НЕ результат моделі, а прості константи.
-# Змінюйте тут, щоб оновити розрахунок і підказку під ним.
-FUEL_PRICE_UAH_PER_L = 54
+# Ціни — середні по основних мережах АЗС України (OKKO, WOG, UPG, SOCAR, Укрнафта, БРСМ…).
+# Оновлюйте ціни РАЗОМ з FUEL_PRICES_DATE: якщо дата старша за FUEL_PRICES_MAX_AGE_DAYS,
+# під калькулятором з'явиться попередження, що ціни застаріли.
+FUEL_PRICES_DATE = date(2026, 10, 13)
+FUEL_PRICES_MAX_AGE_DAYS = 30
+FUEL_PRICES_UAH_PER_L = {
+    "Бензин": 90.3,   # А-95
+    "Дизель": 99.3,
+    "Газ": 45.5,      # автогаз (LPG)
+}
+FUEL_LABELS = {"Бензин": "бензин А-95", "Дизель": "дизель", "Газ": "автогаз"}
+# На газі витрата приблизно на 20% більша, ніж на бензині (експертне припущення, постав 1.0 — щоб вимкнути)
+GAS_CONSUMPTION_FACTOR = 1.2
+
 EV_KWH_PER_100KM = 18
-EV_PRICE_UAH_PER_KWH = 4.32
+# Орієнтовні тарифи зарядки (значення січня 2026: дім — денний тариф для населення,
+# публічні станції — 20–23 грн/кВт·год). Перевіряйте перед оновленням дати вище.
+EV_PRICE_UAH_PER_KWH = {
+    "Вдома (денний тариф)": 4.32,
+    "Публічні станції": 22.0,
+}
+
+
+def resolve_fuel(fuel_type: str | None) -> str:
+    """Тип пального з форми → ключ ціни: Бензин / Дизель / Газ / Електро.
+    Гібриди та невідомі значення рахуємо як бензин."""
+    f = (fuel_type or "").lower()
+    if "електро" in f:
+        return "Електро"
+    if "диз" in f:
+        return "Дизель"
+    if "газ" in f:
+        return "Газ"
+    return "Бензин"
 
 # ───────────────────────────── ДИЗАЙН ─────────────────────────────
 # Картки = st.container(border=True, key="card_..."): Streamlit додає клас st-key-<key>.
@@ -481,21 +511,65 @@ def load_categories() -> dict | None:
     return None
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+# Запасні значення на випадок, якщо не відповіло жодне джерело курсу. Інтерфейс
+# явно попередить користувача, що це застарілі дані (а не підставить їх мовчки).
+FALLBACK_RATES = {
+    "USD": 1.0, "UAH": 44.85, "EUR": 0.8945,
+    "date": "09.10.2026", "source": "застарілі дані", "live": False,
+}
+
+
+def _from_nbu() -> dict:
+    """Офіційні курси НБУ (без ключа). НБУ дає UAH за 1 USD і UAH за 1 EUR,
+    тому EUR за 1 USD = UAH_за_USD / UAH_за_EUR."""
+    r = requests.get("https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json", timeout=5)
+    r.raise_for_status()
+    by_cc = {x["cc"]: x for x in r.json()}
+    usd, eur = by_cc["USD"], by_cc["EUR"]
+    return {
+        "USD": 1.0,
+        "UAH": round(float(usd["rate"]), 4),
+        "EUR": round(float(usd["rate"]) / float(eur["rate"]), 4),
+        "date": usd["exchangedate"],
+        "source": "НБУ",
+        "live": True,
+    }
+
+
+def _from_er_api() -> dict:
+    """Запасне джерело (середньоринкові курси, оновлюються раз на добу)."""
+    r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=5)
+    r.raise_for_status()
+    d = r.json()
+    if d.get("result") != "success":
+        raise RuntimeError("er-api: result != success")
+    return {
+        "USD": 1.0,
+        "UAH": round(float(d["rates"]["UAH"]), 4),
+        "EUR": round(float(d["rates"]["EUR"]), 4),
+        "date": str(d.get("time_last_update_utc", ""))[5:16],
+        "source": "open.er-api.com",
+        "live": True,
+    }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_rates() -> dict:
+    # Якщо обидва джерела недоступні — кидаємо помилку: Streamlit НЕ кешує винятки,
+    # тож наступний запит спробує ще раз, а не застрягне на запасних значеннях на годину.
+    for source in (_from_nbu, _from_er_api):
+        try:
+            return source()
+        except Exception:
+            continue
+    raise RuntimeError("Курси валют недоступні")
+
+
 def get_exchange_rates() -> dict:
-    default = {"USD": 1.0, "UAH": 43.89, "EUR": 0.852}
     try:
-        r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=5)
-        if r.status_code == 200:
-            d = r.json()
-            return {
-                "USD": 1.0,
-                "UAH": round(d["rates"].get("UAH", default["UAH"]), 2),
-                "EUR": round(d["rates"].get("EUR", default["EUR"]), 4),
-            }
+        return _fetch_rates()
     except Exception:
-        pass
-    return default
+        return FALLBACK_RATES
 
 
 # ───────────────────────────── ЗАВАНТАЖЕННЯ КАТЕГОРІЙ ─────────────────────────────
@@ -857,7 +931,9 @@ if st.session_state.prediction_done:
                 horizontal=True, label_visibility="collapsed",
             )
             if curr != "USD":
-                st.caption(f"1 USD = {rates[curr]:.2f} {curr}")
+                st.caption(f"1 USD = {rates[curr]:.2f} {curr} · {rates['source']}, {rates['date']}")
+            if not rates["live"]:
+                st.warning(f"Не вдалося отримати актуальні курси — показано застарілі значення від {rates['date']}.")
 
         price_usd = st.session_state.pred_price
         price_conv = price_usd * rates[curr]
@@ -939,20 +1015,36 @@ if st.session_state.prediction_done:
             with card("fuel"):
                 card_head("Витрати на пальне", "Річні витрати залежно від пробігу")
                 annual_mileage = st.slider("Пробіг за рік, тис. км", 1, 100, 15, 1)
-                if p.get("is_EV") == 0:
+                # Якщо тип пального не вказано, бекенд підставив типовий для моделі авто
+                fuel_raw = p.get("Fuel_Type") or st.session_state.assumed.get("Пальне")
+                fuel_kind = resolve_fuel(fuel_raw)
+                if fuel_kind != "Електро":
                     eng = p.get("Engine_Capacity") or 0
                     consumption = eng * 2.5 + 2 if eng > 0 else 8
-                    yearly_uah = (annual_mileage * 1000 / 100) * consumption * FUEL_PRICE_UAH_PER_L
+                    if fuel_kind == "Газ":
+                        consumption *= GAS_CONSUMPTION_FACTOR
+                    fuel_price = FUEL_PRICES_UAH_PER_L[fuel_kind]
+                    yearly_uah = (annual_mileage * 1000 / 100) * consumption * fuel_price
                     yearly_usd = int(yearly_uah / rates["UAH"])
                     st.info(f"Орієнтовно ${yearly_usd:,}/рік  ·  ~{consumption:.1f} л/100 км".replace(",", " "))
+                    gas_note = (f" (+{(GAS_CONSUMPTION_FACTOR - 1) * 100:.0f}% для газу)"
+                                if fuel_kind == "Газ" else "")
                     st.caption(f"Припущення (не з моделі): витрата ≈ {consumption:.1f} л/100 км за формулою "
-                               f"2.5·об'єм + 2, пальне {FUEL_PRICE_UAH_PER_L} грн/л.")
+                               f"2.5·об'єм + 2{gas_note}, {FUEL_LABELS[fuel_kind]} {fuel_price:.1f} грн/л "
+                               f"(середня по мережах АЗС на {FUEL_PRICES_DATE:%d.%m.%Y}).")
+                    if not fuel_raw:
+                        st.caption("Тип пального не вказано — розрахунок за бензином.")
                 else:
-                    ev_uah = (annual_mileage * 1000 / 100) * EV_KWH_PER_100KM * EV_PRICE_UAH_PER_KWH
+                    ev_mode = st.selectbox("Де заряджаєте", list(EV_PRICE_UAH_PER_KWH), key="ev_charge_mode")
+                    ev_price = EV_PRICE_UAH_PER_KWH[ev_mode]
+                    ev_uah = (annual_mileage * 1000 / 100) * EV_KWH_PER_100KM * ev_price
                     ev_usd = int(ev_uah / rates["UAH"])
                     st.success(f"Електро · зарядка ~${ev_usd:,}/рік".replace(",", " "))
                     st.caption(f"Припущення (не з моделі): {EV_KWH_PER_100KM} кВт·год/100 км, "
-                               f"{EV_PRICE_UAH_PER_KWH} грн/кВт·год.")
+                               f"{ev_price:g} грн/кВт·год (орієнтовний тариф).")
+                if (date.today() - FUEL_PRICES_DATE).days > FUEL_PRICES_MAX_AGE_DAYS:
+                    st.warning(f"Ціни на пальне востаннє оновлювались {FUEL_PRICES_DATE:%d.%m.%Y} — "
+                               "вони можуть бути застарілими.")
 
         if st.session_state.shap_data:
             with card("shap"):
