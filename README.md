@@ -1,28 +1,90 @@
-# AUREA — оцінка ринкової ціни авто (AUTO.RIA)
+# MarketScout — оцінка ринкової ціни авто (AUTO.RIA)
 
 Повний цикл ML-продукту: збір оголошень з [AUTO.RIA](https://auto.ria.com) через офіційний API, очищення даних, порівняння моделей, API на FastAPI і інтерфейс на Streamlit.
 
-Застосунок прогнозує **справедливу ринкову ціну** вживаного легкового авто в доларах (з конвертацією в гривні та євро), показує, **які характеристики найбільше вплинули** на оцінку (SHAP), і дає інструменти покупця: перевірка ціни оголошення, витрати на пальне, кредит, прогноз знецінення, збереження й порівняння кількох авто.
+Застосунок прогнозує **справедливу ринкову ціну** вживаного легкового авто в доларах (з конвертацією в гривні та євро), дає інструменти покупця: перевірка ціни оголошення, кредит, прогноз знецінення, збереження й порівняння кількох авто.
 
 ### Спробувати застосунок
 
 * **[Основне посилання (Streamlit)](https://car-price-predictor-autoria-as5etqdr7uhjyugcgbcxmy.streamlit.app/)**
 > Якщо сторінка не відкривається одразу, зачекайте 60–120 секунд на «прогрів» безкоштовного сервера й оновіть її.
 
-**Поточна модель у застосунку:** LightGBM (`lightgbm_pipeline.pkl`).
+<img width="1339" height="1144" alt="image" src="https://github.com/user-attachments/assets/83e96f0e-2cab-42ae-99e2-b0fe922e2098" />
+
+
+### Аналітичний дашборд (Power BI)
+
+* **[Відкрити інтерактивний дашборд](https://app.powerbi.com/view?r=eyJrIjoiMGM0ZGVlMDEtZWI1Mi00ZTFmLWJkMTUtMzc5N2IyNDkyZmU5IiwidCI6ImI3NjdhNzJlLTQwYjYtNDc2ZC1iMTQ0LTI0OGRhMDdjNzFiNCIsImMiOjl9)**
+
+Дашборд показує структуру ринку вживаних авто за даними AUTO.RIA: розподіл цін, популярні марки й моделі, вплив віку та пробігу на вартість.
+
+<img width="1675" height="941" alt="MarketScout" src="https://github.com/user-attachments/assets/03ffd7fa-6459-4975-94e6-e476aec558d1" />
+
+
+## Технологічний стек
+
+### Мова
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+
+### Збір даних
+
+![AUTO.RIA API](https://img.shields.io/badge/AUTO.RIA_API-E4002B?style=for-the-badge)
+![REST API](https://img.shields.io/badge/REST_API-02569B?style=for-the-badge)
+
+### Обробка та аналіз даних
+
+![Pandas](https://img.shields.io/badge/Pandas-150458?style=for-the-badge&logo=pandas&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white)
+![Apache Parquet](https://img.shields.io/badge/Parquet-50ABF1?style=for-the-badge&logo=apacheparquet&logoColor=white)
+![Jupyter](https://img.shields.io/badge/Jupyter-F37626?style=for-the-badge&logo=jupyter&logoColor=white)
+
+### Машинне навчання
+
+![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikitlearn&logoColor=white)
+![LightGBM](https://img.shields.io/badge/LightGBM-02A88E?style=for-the-badge)
+![CatBoost](https://img.shields.io/badge/CatBoost-FFCC00?style=for-the-badge&logoColor=black)
+![XGBoost](https://img.shields.io/badge/XGBoost-337AB7?style=for-the-badge)
+![Optuna](https://img.shields.io/badge/Optuna-2980B9?style=for-the-badge)
+![SHAP](https://img.shields.io/badge/SHAP-FF0051?style=for-the-badge)
+![joblib](https://img.shields.io/badge/joblib-5C6BC0?style=for-the-badge)
+
+### Бекенд
+
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=for-the-badge&logo=pydantic&logoColor=white)
+![Uvicorn](https://img.shields.io/badge/Uvicorn-499848?style=for-the-badge)
+
+### Фронтенд та візуалізація
+
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
+![Altair](https://img.shields.io/badge/Altair-1F77B4?style=for-the-badge)
+![Matplotlib](https://img.shields.io/badge/Matplotlib-11557C?style=for-the-badge&logo=plotly&logoColor=white)
+![Power BI](https://img.shields.io/badge/Power_BI-F2C811?style=for-the-badge&logo=powerbi&logoColor=black)
+
+### Інфраструктура та деплой
+
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![Docker Compose](https://img.shields.io/badge/Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![Docker Hub](https://img.shields.io/badge/Docker_Hub-0db7ed?style=for-the-badge&logo=docker&logoColor=white)
+![Streamlit Community Cloud](https://img.shields.io/badge/Streamlit_Community_Cloud-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
+
+### Інструменти розробки
+
+![Git](https://img.shields.io/badge/Git-F05032?style=for-the-badge&logo=git&logoColor=white)
+![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)
+![PyCharm](https://img.shields.io/badge/PyCharm-000000?style=for-the-badge&logo=pycharm&logoColor=white)
 
 
 ## Що вміє застосунок
 
 * **Оцінка ринкової вартості.** Модель повертає ціну в USD. Інтерфейс показує орієнтовний діапазон навколо неї (за похибкою моделі) і конвертацію в UAH / EUR.
-* **Необов’язкові поля.** Кузов, привід, колір, коробка, пальне, об’єм, ДТП, розмитнення тощо можна лишити як «Не вказано». Порожнє поле не підміняється нулем: для чисел береться типове значення (медіана / мода за маркою й моделлю), для категорій — окрема категорія «Не вказано».
-* **Пояснення прогнозу (SHAP).** Внесок основних характеристик у ціну.
+* **Необов’язкові поля.** Кузов, привід, колір, коробка, пальне, об’єм, ДТП тощо можна лишити як «Не вказано». Порожнє поле не підміняється нулем: для чисел береться типове значення (медіана / мода за маркою й моделлю), для категорій — окрема категорія «Не вказано».
 * **Детектор ціни оголошення.** Порівняння ціни продавця з ринковою оцінкою.
-* **Вартість володіння.** Орієнтовні витрати на пальне або зарядку від річного пробігу.
 * **Кредитний калькулятор.** Перший внесок, строк, ставка, платіж і переплата.
 * **Прогноз знецінення.** Ціна на кілька років уперед з урахуванням старіння та приросту пробігу.
 * **Збережені авто, пакетна оцінка, порівняння, історія сесії.**
-* 
+
 ## Як розвивалась модель
 
 Спочатку проєкт тримався на **CatBoost**: збір даних, EDA, одна регресія ціни, FastAPI + Streamlit + Docker. Далі змінили обсяг і склад даних і вже на великому корпусі **порівняли кілька алгоритмів** — у застосунок пішов LightGBM.
@@ -95,6 +157,8 @@ Median AE для цих моделей — середнє по 5-fold CV;
 │   ├── new_data/                    # великий CSV у git не комітиться
 │   │   └── README_parser.md
 │   └── parquet/
+├── docs/
+│   └── images/                      # скриншоти для README
 ├── notebooks/
 │   └── EDA.ipynb
 ├── src/
@@ -105,18 +169,6 @@ Median AE для цих моделей — середнє по 5-fold CV;
 ├── docker-compose.yml
 └── README.md
 ```
-
-## Технологічний стек
-
-**Мова:** Python
-
-**Дані та ML:** Pandas, NumPy, scikit-learn, **LightGBM** (прод), CatBoost і XGBoost (порівняння), Optuna, SHAP
-
-**Бекенд:** FastAPI, Pydantic, joblib
-
-**Фронтенд:** Streamlit, Altair, Matplotlib
-
-**Інфраструктура:** Docker, Docker Compose, Git / GitHub
 
 
 ## Як запустити
@@ -178,7 +230,7 @@ python "src/backend/Train final model.py"
 ## Обмеження
 
 1. Оцінка орієнтовна, не офіційна експертиза.
-2. Повний датасет у репозиторії немає (платний API). Структура — у sample-файлі та `data/new_data/README_parser.md`.
+2. Повний датасет у репозиторії немає (платний API).
 3. Ринок змінюється: без дозбору й перенавчання з’являється дрифт.
 
 ---
