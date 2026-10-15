@@ -4,7 +4,6 @@ import time
 from datetime import date, datetime
 
 import altair as alt
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import requests
@@ -297,7 +296,6 @@ _defaults = {
     "assumed": {},
     "payload": {},
     "compare_list": [],
-    "shap_data": {},
     "saved_cars": [],
     "history": [],
     "run_batch": False,
@@ -614,7 +612,6 @@ md_html("""
   <p class='hero-sub'>Базова ціна — модель LightGBM за характеристиками авто.</p>
   <div class='chips'>
     <span class='chip'>LightGBM</span>
-    <span class='chip'>SHAP-пояснення</span>
     <span class='chip'>Прогноз знецінення</span>
     <span class='chip'>Кредитний калькулятор</span>
     <span class='chip'>Пакетна оцінка</span>
@@ -661,11 +658,7 @@ if st.session_state.saved_cars:
                                 "predicted_price_usd": "Оцінка (USD)",
                                 "error": "Помилка",
                             }, inplace=True)
-                            if "price_adjustments" in batch_df.columns:
-                                batch_df["Корективи"] = batch_df["price_adjustments"].apply(
-                                    lambda d: ", ".join(f"{k} {v:+,.0f}$" for k, v in d.items())
-                                    if isinstance(d, dict) and d else "—")
-                                batch_df = batch_df.drop(columns=["price_adjustments"])
+                            batch_df = batch_df.drop(columns=["price_adjustments"], errors="ignore")
                             batch_df.insert(2, "Рік", [c["year"] for c in st.session_state.saved_cars])
                             batch_df.insert(3, "Пробіг", [c["mileage"] for c in st.session_state.saved_cars])
                             st.success("Готово")
@@ -844,7 +837,6 @@ elif calculate_btn:
             st.session_state.range_kind = data.get("range_kind", "mape")
             st.session_state.range_pct = data.get("range_pct", 16.4)
             st.session_state.assumed = data.get("assumed_defaults", {})
-            st.session_state.shap_data = data.get("shap_values", {})
             st.session_state.payload = payload
             st.session_state.prediction_done = True
             st.session_state.history.append({
@@ -876,45 +868,6 @@ elif calculate_btn:
         st.error(f"Несподівана помилка: {e}")
 
 
-# ───────────────────────────── SHAP: спливаюче вікно ─────────────────────────────
-def _shap_body() -> None:
-    df_shap = pd.DataFrame(
-        list(st.session_state.shap_data.items()),
-        columns=["Характеристика", "Вплив ($)"],
-    ).sort_values("Вплив ($)")
-    colors = np.where(df_shap["Вплив ($)"] > 0, "#2ee6a6", "#ff7a59")
-    fig, ax = plt.subplots(figsize=(10, max(3, len(df_shap) * 0.55)))
-    fig.patch.set_facecolor("#121a30")
-    ax.set_facecolor("#121a30")
-    ax.barh(df_shap["Характеристика"], df_shap["Вплив ($)"], color=colors, height=0.55)
-    ax.axvline(0, color="#7f8db3", linewidth=1.0, linestyle="--")
-    ax.tick_params(colors="#eef2ff", length=0)
-    ax.set_xlabel("Зміна ціни, USD", color="#a6b4d8")
-    ax.margins(x=0.2)
-    ax.set_axisbelow(True)
-    ax.grid(axis="x", color="#26324f")
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color("#26324f")
-    for y_pos, val in enumerate(df_shap["Вплив ($)"]):
-        ax.text(
-            val, y_pos, f" {val:+,.0f}$ ".replace(",", " "),
-            va="center", ha="left" if val >= 0 else "right", fontsize=9, color="#eef2ff",
-        )
-    st.pyplot(fig)
-    plt.close(fig)
-
-
-_SHAP_MODE = "expander"
-if hasattr(st, "dialog"):
-    try:
-        shap_popup = st.dialog("Що найбільше вплинуло на ціну", width="large")(_shap_body)
-        _SHAP_MODE = "dialog"
-    except TypeError:
-        pass
-if _SHAP_MODE == "expander" and hasattr(st, "popover"):
-    _SHAP_MODE = "popover"
-
 # ───────────────────────────── РЕЗУЛЬТАТ ─────────────────────────────
 if st.session_state.prediction_done:
     st.write("")
@@ -939,7 +892,6 @@ if st.session_state.prediction_done:
         price_conv = price_usd * rates[curr]
         low_conv = st.session_state.price_low * rates[curr]
         high_conv = st.session_state.price_high * rates[curr]
-        has_rules = bool(st.session_state.price_adjustments)
         range_label = (
             "Діапазон · 80% оцінок моделі"
             if st.session_state.range_kind == "interval80"
@@ -951,7 +903,7 @@ if st.session_state.prediction_done:
             md_html(
                 f"<div class='res-label'>Прогнозована ринкова ціна</div>"
                 f"<div class='res-price'>{fmt_money(price_conv, curr)}</div>"
-                f"<div class='res-hint'>{'модель LightGBM + корективи за правилами' if has_rules else 'прогноз моделі LightGBM'}</div>"
+                f"<div class='res-hint'>оцінка за характеристиками авто</div>"
             )
         with col_range:
             md_html(
@@ -967,17 +919,6 @@ if st.session_state.prediction_done:
         with col_score:
             md_html(score_ring_svg(sc, sc_color, sc_label, dark=True))
 
-    if st.session_state.price_adjustments:
-        with st.expander("З чого складається ціна?"):
-            st.write(f"**Модель LightGBM:** {fmt_money(st.session_state.base_price * rates[curr], curr)}")
-            for label, amount_usd in st.session_state.price_adjustments.items():
-                sign = "+" if amount_usd >= 0 else "−"
-                st.write(f"{label}: {sign}{fmt_money(abs(amount_usd) * rates[curr], curr)}")
-            st.write(f"**Разом:** {fmt_money(price_conv, curr)}")
-            st.caption(
-                "Корективи — прості правила, а не результат навчання: у зібраних оголошеннях немає "
-                "жодного прикладу ДТП/розмитнення/першого власника, тож модель не може їх «вивчити»."
-            )
     if st.session_state.assumed:
         _assumed = ", ".join(f"{k.lower()}: {v}" for k, v in st.session_state.assumed.items())
         st.caption(f"Для полів, які ви не вказали, використано типові значення для цієї моделі авто — {_assumed}.")
@@ -992,7 +933,7 @@ if st.session_state.prediction_done:
         ["Аналітика", "Кредит", "Знецінення", "Порівняння"]
     )
 
-    # ── Аналітика: ціна в оголошенні, пальне, SHAP ──
+    # ── Аналітика: ціна в оголошенні, пальне ──
     with tab_price:
         col_tools1, col_tools2 = st.columns(2)
         with col_tools1:
@@ -1045,19 +986,6 @@ if st.session_state.prediction_done:
                 if (date.today() - FUEL_PRICES_DATE).days > FUEL_PRICES_MAX_AGE_DAYS:
                     st.warning(f"Ціни на пальне востаннє оновлювались {FUEL_PRICES_DATE:%d.%m.%Y} — "
                                "вони можуть бути застарілими.")
-
-        if st.session_state.shap_data:
-            with card("shap"):
-                card_head("Що впливає на ціну", "Пояснення моделі (SHAP) — відкривається лише за вашим бажанням")
-                if _SHAP_MODE == "dialog":
-                    if st.button("Показати вплив характеристик", key="open_shap", type="secondary"):
-                        shap_popup()
-                elif _SHAP_MODE == "popover":
-                    with st.popover("Показати вплив характеристик"):
-                        _shap_body()
-                else:
-                    with st.expander("Показати вплив характеристик"):
-                        _shap_body()
 
     # ── Кредит ──
     with tab_loan:
