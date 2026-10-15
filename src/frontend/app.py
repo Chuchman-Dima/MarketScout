@@ -21,42 +21,6 @@ CURRENT_YEAR = datetime.now().year
 UNKNOWN = "Не вказано"
 TRI = [UNKNOWN, "Ні", "Так"]
 
-# Припущення калькулятора пального — це НЕ результат моделі, а прості константи.
-# Ціни — середні по основних мережах АЗС України (OKKO, WOG, UPG, SOCAR, Укрнафта, БРСМ…).
-# Оновлюйте ціни РАЗОМ з FUEL_PRICES_DATE: якщо дата старша за FUEL_PRICES_MAX_AGE_DAYS,
-# під калькулятором з'явиться попередження, що ціни застаріли.
-FUEL_PRICES_DATE = date(2026, 10, 13)
-FUEL_PRICES_MAX_AGE_DAYS = 30
-FUEL_PRICES_UAH_PER_L = {
-    "Бензин": 90.3,   # А-95
-    "Дизель": 99.3,
-    "Газ": 45.5,      # автогаз (LPG)
-}
-FUEL_LABELS = {"Бензин": "бензин А-95", "Дизель": "дизель", "Газ": "автогаз"}
-# На газі витрата приблизно на 20% більша, ніж на бензині (експертне припущення, постав 1.0 — щоб вимкнути)
-GAS_CONSUMPTION_FACTOR = 1.2
-
-EV_KWH_PER_100KM = 18
-# Орієнтовні тарифи зарядки (значення січня 2026: дім — денний тариф для населення,
-# публічні станції — 20–23 грн/кВт·год). Перевіряйте перед оновленням дати вище.
-EV_PRICE_UAH_PER_KWH = {
-    "Вдома (денний тариф)": 4.32,
-    "Публічні станції": 22.0,
-}
-
-
-def resolve_fuel(fuel_type: str | None) -> str:
-    """Тип пального з форми → ключ ціни: Бензин / Дизель / Газ / Електро.
-    Гібриди та невідомі значення рахуємо як бензин."""
-    f = (fuel_type or "").lower()
-    if "електро" in f:
-        return "Електро"
-    if "диз" in f:
-        return "Дизель"
-    if "газ" in f:
-        return "Газ"
-    return "Бензин"
-
 # ───────────────────────────── ДИЗАЙН ─────────────────────────────
 # Картки = st.container(border=True, key="card_..."): Streamlit додає клас st-key-<key>.
 CARD_SEL = '[class*="st-key-card_"]'
@@ -933,59 +897,22 @@ if st.session_state.prediction_done:
         ["Аналітика", "Кредит", "Знецінення", "Порівняння"]
     )
 
-    # ── Аналітика: ціна в оголошенні, пальне ──
+    # ── Аналітика: ціна в оголошенні ──
     with tab_price:
-        col_tools1, col_tools2 = st.columns(2)
-        with col_tools1:
-            with card("price"):
-                card_head("Ціна в оголошенні", "Порівняйте ціну продавця з ринковою оцінкою")
-                actual_price = st.number_input("USD", min_value=0, value=0, step=100)
-                if actual_price > 0:
-                    diff = actual_price - price_usd
-                    diff_pct = diff / price_usd * 100
-                    if actual_price > st.session_state.price_high:
-                        st.error(f"Вище ринкового діапазону: на {diff_pct:.1f}% (${diff:,.0f}) дорожче за оцінку.")
-                    elif actual_price < st.session_state.price_low:
-                        st.success(f"Нижче ринкового діапазону: на {abs(diff_pct):.1f}% (${abs(diff):,.0f}) дешевше за оцінку.")
-                    else:
-                        st.info("Усередині ринкового діапазону — ціна виглядає адекватною.")
+        with card("price"):
+            card_head("Ціна в оголошенні", "Порівняйте ціну продавця з ринковою оцінкою")
+            actual_price = st.number_input("USD", min_value=0, value=0, step=100)
+            if actual_price > 0:
+                diff = actual_price - price_usd
+                diff_pct = diff / price_usd * 100
+                if actual_price > st.session_state.price_high:
+                    st.error(f"Вище ринкового діапазону: на {diff_pct:.1f}% (${diff:,.0f}) дорожче за оцінку.")
+                elif actual_price < st.session_state.price_low:
+                    st.success(f"Нижче ринкового діапазону: на {abs(diff_pct):.1f}% (${abs(diff):,.0f}) дешевше за оцінку.")
                 else:
-                    st.caption("Введіть ціну продавця для порівняння.")
-
-        with col_tools2:
-            with card("fuel"):
-                card_head("Витрати на пальне", "Річні витрати залежно від пробігу")
-                annual_mileage = st.slider("Пробіг за рік, тис. км", 1, 100, 15, 1)
-                # Якщо тип пального не вказано, бекенд підставив типовий для моделі авто
-                fuel_raw = p.get("Fuel_Type") or st.session_state.assumed.get("Пальне")
-                fuel_kind = resolve_fuel(fuel_raw)
-                if fuel_kind != "Електро":
-                    eng = p.get("Engine_Capacity") or 0
-                    consumption = eng * 2.5 + 2 if eng > 0 else 8
-                    if fuel_kind == "Газ":
-                        consumption *= GAS_CONSUMPTION_FACTOR
-                    fuel_price = FUEL_PRICES_UAH_PER_L[fuel_kind]
-                    yearly_uah = (annual_mileage * 1000 / 100) * consumption * fuel_price
-                    yearly_usd = int(yearly_uah / rates["UAH"])
-                    st.info(f"Орієнтовно ${yearly_usd:,}/рік  ·  ~{consumption:.1f} л/100 км".replace(",", " "))
-                    gas_note = (f" (+{(GAS_CONSUMPTION_FACTOR - 1) * 100:.0f}% для газу)"
-                                if fuel_kind == "Газ" else "")
-                    st.caption(f"Припущення (не з моделі): витрата ≈ {consumption:.1f} л/100 км за формулою "
-                               f"2.5·об'єм + 2{gas_note}, {FUEL_LABELS[fuel_kind]} {fuel_price:.1f} грн/л "
-                               f"(середня по мережах АЗС на {FUEL_PRICES_DATE:%d.%m.%Y}).")
-                    if not fuel_raw:
-                        st.caption("Тип пального не вказано — розрахунок за бензином.")
-                else:
-                    ev_mode = st.selectbox("Де заряджаєте", list(EV_PRICE_UAH_PER_KWH), key="ev_charge_mode")
-                    ev_price = EV_PRICE_UAH_PER_KWH[ev_mode]
-                    ev_uah = (annual_mileage * 1000 / 100) * EV_KWH_PER_100KM * ev_price
-                    ev_usd = int(ev_uah / rates["UAH"])
-                    st.success(f"Електро · зарядка ~${ev_usd:,}/рік".replace(",", " "))
-                    st.caption(f"Припущення (не з моделі): {EV_KWH_PER_100KM} кВт·год/100 км, "
-                               f"{ev_price:g} грн/кВт·год (орієнтовний тариф).")
-                if (date.today() - FUEL_PRICES_DATE).days > FUEL_PRICES_MAX_AGE_DAYS:
-                    st.warning(f"Ціни на пальне востаннє оновлювались {FUEL_PRICES_DATE:%d.%m.%Y} — "
-                               "вони можуть бути застарілими.")
+                    st.info("Усередині ринкового діапазону — ціна виглядає адекватною.")
+            else:
+                st.caption("Введіть ціну продавця для порівняння.")
 
     # ── Кредит ──
     with tab_loan:
@@ -1032,6 +959,7 @@ if st.session_state.prediction_done:
     # ── Знецінення ──
     with tab_depr:
         with card("depr"):
+            annual_mileage = st.slider("Пробіг за рік, тис. км", 1, 100, 15, 1)
             card_head(f"Знецінення · {annual_mileage} тис. км/рік", "Прогноз вартості авто на горизонті кількох років")
             depr_years = st.slider("Горизонт, років", 1, 20, 5, 1)
             try:
